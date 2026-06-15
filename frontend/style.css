@@ -568,9 +568,26 @@ body::after {
 .highlight-layer {
   color: transparent;
   pointer-events: none;
-  z-index: 1;
+  z-index: 4; /* Overlay on top of textarea to capture events on children */
   user-select: none;
   -webkit-user-select: none;
+}
+
+.highlight-layer mark.mark-applied-fix {
+  color: transparent;
+  background-color: transparent !important;
+  border-bottom: 2px solid var(--gold); /* solid golden line */
+  border-radius: 0;
+  padding: 0;
+  position: relative;
+  pointer-events: auto !important; /* capture pointer events */
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.highlight-layer mark.mark-applied-fix:hover {
+  background-color: rgba(199, 164, 74, 0.18) !important; /* subtle golden background on hover */
+  border-bottom-color: var(--gold-light);
 }
 
 /* Textarea: transparent background so highlight shows through */

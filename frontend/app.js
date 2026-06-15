@@ -33,6 +33,7 @@ const STORAGE_KEY   = 'rdo_entries';     // LocalStorage key for journal entries
 const AppState = {
   currentText:           '',
   errors:                [],       // Array of {type, start, end, original, suggestion, explanation}
+  appliedFixes:          [],       // Array of {start, end, original, suggestion, originalError}
   history:               [],       // Loaded from localStorage
   isLoading:             false,
   activeOperation:       null,     // 'evaluate' | 'rewrite' | 'hone' | null
@@ -117,41 +118,66 @@ function syncHighlightScroll() {
  * @param {string} text   — The raw textarea content
  * @param {Array}  errors — Sorted array of error objects with {start, end, type}
  */
-function renderHighlights(text, errors) {
+function renderHighlights(text, errors, appliedFixes = []) {
   if (!DOM.highlightLayer) return;
 
-  // No errors: mirror the plain text so scrolling still syncs
-  if (!errors || errors.length === 0) {
+  const combined = [];
+  if (errors) {
+    errors.forEach((err, idx) => {
+      combined.push({
+        start: err.start,
+        end: err.end,
+        type: 'error',
+        errorType: err.type || 'grammar',
+        index: idx
+      });
+    });
+  }
+  if (appliedFixes) {
+    appliedFixes.forEach((fix, idx) => {
+      combined.push({
+        start: fix.start,
+        end: fix.end,
+        type: 'fix',
+        index: idx
+      });
+    });
+  }
+
+  if (combined.length === 0) {
     DOM.highlightLayer.innerHTML = escapeHTML(text) + '\n';
     return;
   }
 
-  // Sort errors by start position (ascending), then by end position (desc for nesting)
-  const sorted = [...errors].sort((a, b) => a.start - b.start || b.end - a.end);
+  // Sort by start position (ascending), then by end position (descending for nesting)
+  combined.sort((a, b) => a.start - b.start || b.end - a.end);
 
   let html = '';
   let cursor = 0;
 
-  for (let i = 0; i < sorted.length; i++) {
-    const err = sorted[i];
+  for (let i = 0; i < combined.length; i++) {
+    const item = combined[i];
 
-    // Skip overlapping errors (simple non-overlapping strategy)
-    if (err.start < cursor) continue;
+    // Skip overlapping highlights
+    if (item.start < cursor) continue;
 
-    // Plain text before this error
-    if (err.start > cursor) {
-      html += escapeHTML(text.slice(cursor, err.start));
+    // Plain text before this highlight
+    if (item.start > cursor) {
+      html += escapeHTML(text.slice(cursor, item.start));
     }
 
-    // The error-marked segment
-    const errorText = text.slice(err.start, err.end);
-    const typeClass = `mark-${err.type || 'grammar'}`;
-    html += `<mark class="${typeClass}" data-error-index="${i}">${escapeHTML(errorText)}</mark>`;
+    const itemText = text.slice(item.start, item.end);
+    if (item.type === 'error') {
+      const typeClass = `mark-${(item.errorType || 'grammar').toLowerCase()}`;
+      html += `<mark class="${typeClass}" data-error-index="${item.index}">${escapeHTML(itemText)}</mark>`;
+    } else if (item.type === 'fix') {
+      html += `<mark class="mark-applied-fix" data-fix-index="${item.index}" title="Click to undo correction">${escapeHTML(itemText)}</mark>`;
+    }
 
-    cursor = err.end;
+    cursor = item.end;
   }
 
-  // Remaining text after the last error
+  // Remaining text after the last highlight
   if (cursor < text.length) {
     html += escapeHTML(text.slice(cursor));
   }
@@ -325,11 +351,12 @@ async function evaluate() {
 
     // Store results in state
     AppState.errors       = data.errors || [];
+    AppState.appliedFixes = []; // Reset applied fixes on fresh evaluation
     AppState.overallScore = data.score ?? null;
     AppState.summary      = data.summary || '';
 
     // Render highlights on the overlay
-    renderHighlights(DOM.textarea.value, AppState.errors);
+    renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
 
     // Render corrections sidebar
     renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
@@ -382,7 +409,8 @@ async function rewrite() {
 
     // Clear stale evaluation errors (text has changed)
     AppState.errors = [];
-    renderHighlights(DOM.textarea.value, []);
+    AppState.appliedFixes = [];
+    renderHighlights(DOM.textarea.value, [], []);
     updateCounts();
 
     // Show the rewrite result in the corrections sidebar
@@ -420,7 +448,8 @@ async function hone() {
 
     // Clear stale errors
     AppState.errors = [];
-    renderHighlights(honed, []);
+    AppState.appliedFixes = [];
+    renderHighlights(honed, [], []);
     updateCounts();
 
     // Show improvements
@@ -575,7 +604,8 @@ function loadEntry(id) {
 
   // Clear stale evaluation data
   AppState.errors = [];
-  renderHighlights(entry.text || '', []);
+  AppState.appliedFixes = [];
+  renderHighlights(entry.text || '', [], []);
   updateCounts();
   renderHistory(); // Update active state
 
@@ -607,10 +637,11 @@ function newEntry() {
   DOM.textarea.value      = '';
   AppState.currentEntryId = null;
   AppState.errors         = [];
+  AppState.appliedFixes   = [];
   AppState.overallScore   = null;
   AppState.summary        = '';
 
-  renderHighlights('', []);
+  renderHighlights('', [], []);
   updateCounts();
   updateScoreDisplay(null);
   clearCorrections();
@@ -822,10 +853,22 @@ function applyFix(errorIndex) {
   const before = text.substring(0, err.start);
   const after  = text.substring(err.end);
 
-  DOM.textarea.value = before + (err.suggestion || '') + after;
+  const replacement = err.suggestion || '';
+  DOM.textarea.value = before + replacement + after;
+
+  const lengthDiff = replacement.length - (err.end - err.start);
+
+  // Store this fix in appliedFixes so it can be undone
+  const appliedFix = {
+    start: err.start,
+    end: err.start + replacement.length,
+    original: err.original,
+    suggestion: replacement,
+    originalError: { ...err } // shallow copy to preserve original details
+  };
+  AppState.appliedFixes.push(appliedFix);
 
   // Adjust positions of remaining errors
-  const lengthDiff = (err.suggestion || '').length - (err.end - err.start);
   AppState.errors.splice(errorIndex, 1);
   AppState.errors.forEach((e) => {
     if (e.start > err.start) {
@@ -834,12 +877,71 @@ function applyFix(errorIndex) {
     }
   });
 
+  // Adjust positions of other already applied fixes
+  AppState.appliedFixes.forEach((f, idx) => {
+    // Exclude the one we just added
+    if (idx !== AppState.appliedFixes.length - 1 && f.start > err.start) {
+      f.start += lengthDiff;
+      f.end   += lengthDiff;
+    }
+  });
+
   // Re-render
-  renderHighlights(DOM.textarea.value, AppState.errors);
+  renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
   renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
   updateCounts();
 
   showToast('Fix applied.', 'success');
+}
+
+/**
+ * Undo an applied fix, restoring the original text and error state.
+ */
+function undoFix(fixIndex) {
+  const fix = AppState.appliedFixes[fixIndex];
+  if (!fix) return;
+
+  const text   = DOM.textarea.value;
+  const before = text.substring(0, fix.start);
+  const after  = text.substring(fix.end);
+
+  DOM.textarea.value = before + fix.original + after;
+
+  const lengthDiff = fix.original.length - (fix.end - fix.start);
+
+  // Adjust positions of remaining errors
+  AppState.errors.forEach((e) => {
+    if (e.start > fix.start) {
+      e.start += lengthDiff;
+      e.end   += lengthDiff;
+    }
+  });
+
+  // Adjust positions of other applied fixes
+  AppState.appliedFixes.forEach((f, idx) => {
+    if (idx !== fixIndex && f.start > fix.start) {
+      f.start += lengthDiff;
+      f.end   += lengthDiff;
+    }
+  });
+
+  // Restore the error object
+  const restoredError = {
+    ...fix.originalError,
+    start: fix.start,
+    end: fix.start + fix.original.length
+  };
+  AppState.errors.push(restoredError);
+
+  // Remove this fix from appliedFixes
+  AppState.appliedFixes.splice(fixIndex, 1);
+
+  // Re-render
+  renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+  renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+  updateCounts();
+
+  showToast('Fix undone.', 'info');
 }
 
 /* --------------------------------------------------------------------------
@@ -1012,8 +1114,8 @@ function setupEventListeners() {
   // --- Textarea events ---
   DOM.textarea?.addEventListener('input', () => {
     updateCounts();
-    // Re-render highlights with current errors (keeps marks in sync with edits)
-    renderHighlights(DOM.textarea.value, AppState.errors);
+    // Re-render highlights with current errors and applied fixes (keeps marks in sync with edits)
+    renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
     syncHighlightScroll();
   });
 
@@ -1088,6 +1190,15 @@ function setupEventListeners() {
           mark.classList.remove('mark-hover');
         }
       }
+    }
+  });
+
+  // --- Delegated click: Undo applied fix when indicator is clicked ---
+  DOM.highlightLayer?.addEventListener('click', (e) => {
+    const mark = e.target.closest('.mark-applied-fix');
+    if (mark) {
+      const index = parseInt(mark.getAttribute('data-fix-index'), 10);
+      undoFix(index);
     }
   });
 

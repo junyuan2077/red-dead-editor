@@ -1,0 +1,20 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment / secrets
+.env
+
+# TTS model weights (too large for GitHub — ~280 MB)
+*.ckpt
+*.pth
+
+# Logs
+launch.log
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db

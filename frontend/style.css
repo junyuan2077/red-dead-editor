@@ -1,0 +1,1506 @@
+/* ==========================================================================
+   RED DEAD EDITOR — Style Sheet
+   A weathered journal from the American frontier, circa 1899.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. CUSTOM FONTS
+   -------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: 'RedDead';
+  src: url('assets/red.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'RedDeadText';
+  src: url('assets/redT.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* --------------------------------------------------------------------------
+   2. CSS CUSTOM PROPERTIES — The palette of the Old West
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* === Core Colors === */
+  --bg-deep:         #1a1210;
+  --bg-deep-rgb:     26, 18, 16;
+
+  --parchment:       #d4c4a0;
+  --parchment-dark:  #b8a67e;
+  --parchment-light: #e6dcc4;
+
+  --red-deep:        #8b1a1a;
+  --red-bright:      #c62828;
+  --red-glow:        #e53935;
+
+  --gold:            #c7a44a;
+  --gold-light:      #e8d48b;
+  --gold-dim:        #a68a3a;
+
+  --ink:             #2c1810;
+  --ink-light:       #4a3728;
+
+  --text-light:      #e8dcc8;
+  --text-muted:      #9a8b78;
+
+  /* === Error Type Colors === */
+  --err-grammar:     #c62828;
+  --err-grammar-bg:  rgba(198, 40, 40, 0.18);
+  --err-spelling:    #e65100;
+  --err-spelling-bg: rgba(230, 81, 0, 0.18);
+  --err-style:       #c7a44a;
+  --err-style-bg:    rgba(199, 164, 74, 0.18);
+  --err-vocabulary:  #1565c0;
+  --err-vocab-bg:    rgba(21, 101, 192, 0.18);
+
+  /* === Spacing === */
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md:  16px;
+  --space-lg:  24px;
+  --space-xl:  32px;
+  --space-2xl: 48px;
+
+  /* === Sizing === */
+  --header-height: 72px;
+  --sidebar-width-left:  280px;
+  --sidebar-width-right: 320px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* === Transitions === */
+  --transition-fast:   0.15s ease;
+  --transition-base:   0.25s ease;
+  --transition-slow:   0.4s ease;
+  --transition-drawer: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* === Shadows === */
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
+  --shadow-lg:    0 8px 30px rgba(0,0,0,0.6);
+  --shadow-glow:  0 0 20px rgba(199,164,74,0.15);
+  --shadow-inset: inset 0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* --------------------------------------------------------------------------
+   3. RESET & BASE STYLES
+   -------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  font-family: 'Lora', 'Georgia', 'Times New Roman', serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-light);
+  overflow: hidden;           /* Prevent body scroll; layout handles it */
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Selection color: gold on deep brown */
+::selection {
+  background: var(--gold);
+  color: var(--ink);
+}
+
+::-moz-selection {
+  background: var(--gold);
+  color: var(--ink);
+}
+
+/* Remove tap highlight on mobile */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+img, svg {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+a {
+  color: var(--gold);
+  text-decoration: none;
+}
+
+/* --------------------------------------------------------------------------
+   4. FULL-VIEWPORT BACKGROUND
+   Distressed dark texture covering the entire page
+   -------------------------------------------------------------------------- */
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    /* Dark overlay gradient for extra depth */
+    linear-gradient(
+      180deg,
+      rgba(var(--bg-deep-rgb), 0.92) 0%,
+      rgba(var(--bg-deep-rgb), 0.85) 50%,
+      rgba(var(--bg-deep-rgb), 0.95) 100%
+    ),
+    url('assets/background.jpg') center / cover no-repeat fixed;
+  background-color: var(--bg-deep);
+}
+
+/* Subtle vignette overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 50%,
+    rgba(0, 0, 0, 0.4) 100%
+  );
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   5. APP HEADER
+   -------------------------------------------------------------------------- */
+
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-lg);
+  background: rgba(var(--bg-deep-rgb), 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(199, 164, 74, 0.12);
+}
+
+/* Textured red stripe beneath header */
+.app-header::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: url('assets/texturedRed.png') repeat-x center / auto 100%;
+  opacity: 0.7;
+}
+
+.header-brand {
+  text-align: center;
+  flex: 1;
+}
+
+.header-title {
+  font-family: 'RedDead', 'Georgia', serif;
+  font-size: clamp(1.4rem, 3vw, 2rem);
+  font-weight: normal;
+  color: var(--gold);
+  letter-spacing: 0.12em;
+  text-shadow:
+    0 0 30px rgba(199, 164, 74, 0.3),
+    0 2px 4px rgba(0, 0, 0, 0.6);
+  line-height: 1.2;
+}
+
+.header-subtitle {
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: clamp(0.65rem, 1.5vw, 0.8rem);
+  color: var(--text-muted);
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+/* Sidebar toggle buttons — hidden on desktop, shown on mobile */
+.sidebar-toggle {
+  display: none;  /* Hidden on desktop */
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.sidebar-toggle:hover {
+  color: var(--gold);
+  background: rgba(199, 164, 74, 0.1);
+}
+
+/* --------------------------------------------------------------------------
+   6. APP LAYOUT — Three-column CSS Grid
+   -------------------------------------------------------------------------- */
+
+.app-layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-width-left) 1fr var(--sidebar-width-right);
+  height: calc(100vh - var(--header-height));
+  margin-top: var(--header-height);
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   7. SIDEBARS — Shared Styles
+   -------------------------------------------------------------------------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: rgba(var(--bg-deep-rgb), 0.65);
+  border-right: 1px solid rgba(199, 164, 74, 0.08);
+  overflow: hidden;
+}
+
+.corrections-sidebar {
+  border-right: none;
+  border-left: 1px solid rgba(199, 164, 74, 0.08);
+}
+
+.sidebar-header {
+  padding: var(--space-lg);
+  flex-shrink: 0;
+}
+
+.sidebar-title {
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 1rem;
+  font-weight: normal;
+  color: var(--gold);
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-md);
+  /* Textured yellow underline */
+  border-bottom: 3px solid transparent;
+  background-image: url('assets/texturedYellow.png');
+  background-repeat: no-repeat;
+  background-position: bottom left;
+  background-size: 100% 3px;
+  /* Clip so image only appears on the border area */
+}
+
+/* Alternative: use pseudo-element for the underline */
+.sidebar-title::after {
+  content: none; /* Disabled, using background-image above */
+}
+
+.sidebar-icon {
+  color: var(--gold-dim);
+  flex-shrink: 0;
+}
+
+.sidebar-footer {
+  padding: var(--space-md) var(--space-lg);
+  flex-shrink: 0;
+  border-top: 1px solid rgba(199, 164, 74, 0.08);
+}
+
+/* --------------------------------------------------------------------------
+   8. HISTORY LIST & ITEMS
+   -------------------------------------------------------------------------- */
+
+.history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 var(--space-md);
+}
+
+.history-item {
+  position: relative;
+  padding: var(--space-md);
+  margin-bottom: var(--space-sm);
+  background: rgba(212, 196, 160, 0.06);
+  border: 1px solid rgba(212, 196, 160, 0.08);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.history-item:hover {
+  background: rgba(212, 196, 160, 0.1);
+  border-left-color: var(--red-bright);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.history-item.active {
+  background: rgba(199, 164, 74, 0.08);
+  border-left-color: var(--gold);
+  border-color: rgba(199, 164, 74, 0.2);
+}
+
+.history-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.history-item-title {
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--parchment);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.history-item-delete {
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.history-item:hover .history-item-delete {
+  opacity: 1;
+}
+
+.history-item-delete:hover {
+  color: var(--red-bright);
+  background: rgba(198, 40, 40, 0.15);
+}
+
+.history-item-date {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  margin-top: var(--space-xs);
+  display: block;
+}
+
+.history-item-preview {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+  margin-top: var(--space-xs);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* New Entry button */
+.btn-new-entry {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gold);
+  background: rgba(199, 164, 74, 0.08);
+  border: 1px dashed rgba(199, 164, 74, 0.25);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.btn-new-entry:hover {
+  background: rgba(199, 164, 74, 0.15);
+  border-color: var(--gold);
+}
+
+/* --------------------------------------------------------------------------
+   9. JOURNAL AREA — The writing surface
+   -------------------------------------------------------------------------- */
+
+.journal-area {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--space-md);
+  gap: var(--space-sm);
+}
+
+/* --- Header with counts --- */
+.journal-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-xs) var(--space-sm);
+  flex-shrink: 0;
+}
+
+.journal-counts {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.count-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.count-badge svg {
+  opacity: 0.6;
+}
+
+.count-value {
+  font-weight: 600;
+  color: var(--parchment-dark);
+}
+
+/* --- Journal container: the parchment surface --- */
+.journal-container {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  box-shadow:
+    var(--shadow-lg),
+    var(--shadow-inset),
+    0 0 0 1px rgba(199, 164, 74, 0.06);
+
+  /* Aged parchment background with subtle noise */
+  background-color: var(--parchment);
+  background-image:
+    /* Faint ruled lines */
+    repeating-linear-gradient(
+      to bottom,
+      transparent,
+      transparent 31px,
+      rgba(44, 24, 16, 0.06) 31px,
+      rgba(44, 24, 16, 0.06) 32px
+    ),
+    /* Subtle grain noise (CSS only) */
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+}
+
+/* Aged edge effect on the parchment */
+.journal-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+  box-shadow:
+    inset 0 0 60px rgba(44, 24, 16, 0.15),
+    inset 0 0 120px rgba(44, 24, 16, 0.08);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* --- Shared text styling for overlay sync --- */
+.highlight-layer,
+.editor-textarea {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  font-family: 'RedDead', 'Georgia', serif;
+  font-size: 18px;
+  line-height: 1.8;
+  padding: var(--space-lg);
+  padding-top: 28px; /* align with ruled lines */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  letter-spacing: 0.01em;
+  border: none;
+  overflow-y: auto;
+}
+
+/* Highlight layer: text is invisible, only marks show */
+.highlight-layer {
+  color: transparent;
+  pointer-events: none;
+  z-index: 1;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Textarea: transparent background so highlight shows through */
+.editor-textarea {
+  background: transparent;
+  color: var(--ink);
+  caret-color: var(--red-deep);
+  resize: none;
+  outline: none;
+  z-index: 2;
+  /* Match the highlight layer exactly */
+}
+
+.editor-textarea::placeholder {
+  color: var(--parchment-dark);
+  opacity: 0.6;
+  font-style: italic;
+}
+
+/* --- Error highlight marks --- */
+.highlight-layer mark {
+  color: transparent;
+  border-radius: 2px;
+  padding: 0;
+  position: relative;
+}
+
+.mark-grammar {
+  background: var(--err-grammar-bg);
+  text-decoration: underline wavy var(--err-grammar);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+.mark-spelling {
+  background: var(--err-spelling-bg);
+  text-decoration: underline wavy var(--err-spelling);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+.mark-style {
+  background: var(--err-style-bg);
+  text-decoration: underline wavy var(--err-style);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+.mark-vocabulary {
+  background: var(--err-vocab-bg);
+  text-decoration: underline dotted var(--err-vocabulary);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+/* --- Loading overlay --- */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: none;  /* Hidden by default */
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  background: rgba(var(--bg-deep-rgb), 0.82);
+  backdrop-filter: blur(4px);
+  border-radius: var(--radius-lg);
+  animation: fadeIn 0.3s ease;
+}
+
+.loading-overlay.visible {
+  display: flex;
+}
+
+.loading-spinner {
+  position: relative;
+  width: 60px;
+  height: 60px;
+}
+
+.spinner-ring {
+  position: absolute;
+  inset: 0;
+  border: 3px solid transparent;
+  border-radius: 50%;
+}
+
+.spinner-ring:nth-child(1) {
+  border-top-color: var(--gold);
+  animation: spin 1.2s linear infinite;
+}
+
+.spinner-ring:nth-child(2) {
+  inset: 6px;
+  border-right-color: var(--red-bright);
+  animation: spin 1.6s linear infinite reverse;
+}
+
+.spinner-ring:nth-child(3) {
+  inset: 12px;
+  border-bottom-color: var(--parchment-dark);
+  animation: spin 2s linear infinite;
+}
+
+.loading-text {
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.95rem;
+  color: var(--gold-light);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* --------------------------------------------------------------------------
+   10. ACTION BUTTONS
+   -------------------------------------------------------------------------- */
+
+.journal-footer {
+  display: flex;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    filter var(--transition-fast),
+    opacity var(--transition-fast),
+    background var(--transition-fast);
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+.btn-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/* Evaluate — textured red */
+.btn-evaluate {
+  background: var(--red-deep) url('assets/texturedRed.png') center / cover no-repeat;
+  color: #fff;
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.08);
+  flex: 1;
+  min-width: 120px;
+}
+
+.btn-evaluate:hover:not(:disabled) {
+  filter: brightness(1.2);
+  box-shadow: var(--shadow-md), 0 0 20px rgba(198, 40, 40, 0.3);
+}
+
+/* Rewrite — textured gold */
+.btn-rewrite {
+  background: var(--gold) url('assets/texturedYellow.png') center / cover no-repeat;
+  color: var(--ink);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.12);
+  flex: 1;
+  min-width: 120px;
+}
+
+.btn-rewrite:hover:not(:disabled) {
+  filter: brightness(1.15);
+  box-shadow: var(--shadow-md), 0 0 20px rgba(199, 164, 74, 0.3);
+}
+
+/* Hone — dark with gold border */
+.btn-hone {
+  background: rgba(var(--bg-deep-rgb), 0.8);
+  color: var(--gold);
+  border-color: var(--gold-dim);
+  box-shadow: var(--shadow-sm);
+  flex: 1;
+  min-width: 100px;
+}
+
+.btn-hone:hover:not(:disabled) {
+  background: var(--gold);
+  color: var(--ink);
+  box-shadow: var(--shadow-md), var(--shadow-glow);
+}
+
+/* Save — parchment */
+.btn-save {
+  background: var(--parchment);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  flex: 1;
+  min-width: 100px;
+}
+
+.btn-save:hover:not(:disabled) {
+  background: var(--parchment-dark);
+  box-shadow: var(--shadow-md);
+}
+
+/* Loading state for buttons */
+.btn--loading {
+  pointer-events: none;
+}
+
+.btn--loading::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* --------------------------------------------------------------------------
+   11. CORRECTIONS SIDEBAR — Score, Cards, TTS
+   -------------------------------------------------------------------------- */
+
+.corrections-sidebar {
+  overflow-y: auto;
+}
+
+/* --- Score Display --- */
+.score-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-lg);
+  gap: var(--space-sm);
+}
+
+.score-ring {
+  position: relative;
+  width: 100px;
+  height: 100px;
+}
+
+.score-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.score-track {
+  fill: none;
+  stroke: rgba(199, 164, 74, 0.12);
+  stroke-width: 6;
+}
+
+.score-fill {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 326.73;     /* 2 * π * 52 */
+  stroke-dashoffset: 326.73;    /* Fully hidden by default */
+  transition: stroke-dashoffset 1s ease, stroke 0.5s ease;
+}
+
+.score-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'RedDead', 'Georgia', serif;
+  font-size: 2rem;
+  color: var(--gold);
+  text-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+.score-label {
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Score color states */
+.score-display.score-high .score-fill  { stroke: #4caf50; }
+.score-display.score-high .score-value { color: #4caf50; }
+
+.score-display.score-mid .score-fill   { stroke: var(--gold); }
+.score-display.score-mid .score-value  { color: var(--gold); }
+
+.score-display.score-low .score-fill   { stroke: var(--red-bright); }
+.score-display.score-low .score-value  { color: var(--red-bright); }
+
+/* --- Summary Text --- */
+.summary-text {
+  padding: 0 var(--space-lg) var(--space-md);
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  border-bottom: 1px solid rgba(199, 164, 74, 0.08);
+}
+
+.summary-text strong {
+  color: var(--parchment);
+}
+
+/* --- Corrections List --- */
+.corrections-list {
+  padding: var(--space-md) var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* --- Correction Card --- */
+.correction-card {
+  background: rgba(var(--bg-deep-rgb), 0.6);
+  border: 1px solid rgba(199, 164, 74, 0.1);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+  animation: fadeIn 0.3s ease;
+}
+
+.correction-card:hover {
+  border-color: rgba(199, 164, 74, 0.25);
+  box-shadow: var(--shadow-glow);
+}
+
+/* Error type badge */
+.error-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 99px;
+  width: fit-content;
+}
+
+.error-grammar    { background: var(--err-grammar-bg); color: var(--err-grammar); border: 1px solid var(--err-grammar); }
+.error-spelling   { background: var(--err-spelling-bg); color: var(--err-spelling); border: 1px solid var(--err-spelling); }
+.error-style      { background: var(--err-style-bg); color: var(--err-style); border: 1px solid var(--err-style); }
+.error-vocabulary { background: var(--err-vocab-bg); color: var(--err-vocabulary); border: 1px solid var(--err-vocabulary); }
+
+.correction-original {
+  font-size: 0.88rem;
+  color: #c07070;
+}
+
+.correction-original del {
+  text-decoration: line-through;
+  text-decoration-color: var(--red-bright);
+}
+
+.correction-suggestion {
+  font-size: 0.88rem;
+  color: var(--gold-light);
+}
+
+.correction-suggestion ins {
+  text-decoration: none;
+  background: rgba(199, 164, 74, 0.1);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.correction-explanation {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.btn-apply-fix {
+  align-self: flex-start;
+  padding: var(--space-xs) var(--space-md);
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #fff;
+  background: var(--red-deep);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.btn-apply-fix:hover {
+  background: var(--red-bright);
+  box-shadow: 0 0 12px rgba(198, 40, 40, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   12. TTS PLAYER
+   -------------------------------------------------------------------------- */
+
+.tts-player {
+  margin: var(--space-md) var(--space-lg) var(--space-lg);
+  background: rgba(var(--bg-deep-rgb), 0.7);
+  border: 1px solid rgba(199, 164, 74, 0.12);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+.tts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.tts-label {
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.8rem;
+  color: var(--gold);
+  letter-spacing: 0.06em;
+}
+
+.tts-voice {
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.tts-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.tts-play-btn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--gold-dim);
+  background: transparent;
+  color: var(--gold);
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.tts-play-btn:hover {
+  background: var(--red-deep);
+  border-color: var(--gold);
+  color: #fff;
+}
+
+.tts-play-btn.playing .tts-icon-play  { display: none; }
+.tts-play-btn.playing .tts-icon-pause { display: block !important; }
+
+.tts-waveform {
+  flex: 1;
+  height: 4px;
+  background: rgba(199, 164, 74, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.tts-progress {
+  height: 100%;
+  width: 0%;
+  background: var(--gold);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+
+/* --------------------------------------------------------------------------
+   13. SIDEBAR BACKDROP (Mobile)
+   -------------------------------------------------------------------------- */
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition-drawer), visibility var(--transition-drawer);
+}
+
+.sidebar-backdrop.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* --------------------------------------------------------------------------
+   14. TOAST NOTIFICATIONS
+   -------------------------------------------------------------------------- */
+
+.toast-container {
+  position: fixed;
+  bottom: var(--space-lg);
+  right: var(--space-lg);
+  z-index: 200;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--space-sm);
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  min-width: 280px;
+  max-width: 400px;
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-md);
+  background: rgba(var(--bg-deep-rgb), 0.95);
+  backdrop-filter: blur(8px);
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.85rem;
+  color: var(--text-light);
+  box-shadow: var(--shadow-lg);
+  animation: toastIn 0.4s ease forwards;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.toast.toast-exit {
+  animation: toastOut 0.3s ease forwards;
+}
+
+.toast-success {
+  border-left: 3px solid var(--gold);
+}
+
+.toast-error {
+  border-left: 3px solid var(--red-bright);
+}
+
+.toast-info {
+  border-left: 3px solid var(--parchment-dark);
+}
+
+.toast-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+/* --------------------------------------------------------------------------
+   15. CUSTOM SCROLLBARS
+   -------------------------------------------------------------------------- */
+
+/* Webkit (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(var(--bg-deep-rgb), 0.3);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--parchment-dark);
+  border-radius: 99px;
+  border: 1px solid transparent;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-dim);
+}
+
+/* Journal textarea scrollbar on parchment */
+.editor-textarea::-webkit-scrollbar-track,
+.highlight-layer::-webkit-scrollbar-track {
+  background: rgba(44, 24, 16, 0.06);
+}
+
+.editor-textarea::-webkit-scrollbar-thumb,
+.highlight-layer::-webkit-scrollbar-thumb {
+  background: var(--ink-light);
+  border-radius: 99px;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--parchment-dark) rgba(var(--bg-deep-rgb), 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   16. KEYFRAME ANIMATIONS
+   -------------------------------------------------------------------------- */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(80px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes toastOut {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(80px) scale(0.95);
+  }
+}
+
+@keyframes cardAppear {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   17. RESPONSIVE — TABLET (≤ 1024px)
+   Sidebars collapse into slide-over drawers
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 1024px) {
+  .sidebar-toggle {
+    display: flex;   /* Show mobile toggles */
+  }
+
+  .app-layout {
+    grid-template-columns: 1fr;  /* Single column */
+  }
+
+  /* --- Convert sidebars to fixed overlay drawers --- */
+  .sidebar {
+    position: fixed;
+    top: var(--header-height);
+    bottom: 0;
+    z-index: 50;
+    width: 300px;
+    background: rgba(var(--bg-deep-rgb), 0.96);
+    backdrop-filter: blur(12px);
+    transition: transform var(--transition-drawer);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .history-sidebar {
+    left: 0;
+    border-right: 1px solid rgba(199, 164, 74, 0.1);
+    transform: translateX(-100%);
+  }
+
+  .corrections-sidebar {
+    right: 0;
+    border-left: 1px solid rgba(199, 164, 74, 0.1);
+    transform: translateX(100%);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* Journal area takes full width */
+  .journal-area {
+    padding: var(--space-sm);
+    gap: var(--space-xs);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   18. RESPONSIVE — PHONE (≤ 768px)
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  :root {
+    --header-height: 60px;
+  }
+
+  .header-title {
+    font-size: 1.2rem;
+    letter-spacing: 0.08em;
+  }
+
+  .header-subtitle {
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+  }
+
+  .app-header {
+    padding: 0 var(--space-md);
+  }
+
+  /* Slightly smaller editor text */
+  .highlight-layer,
+  .editor-textarea {
+    font-size: 16px;
+    padding: var(--space-md);
+    padding-top: 22px;
+    line-height: 1.7;
+  }
+
+  /* Stack action buttons */
+  .journal-footer {
+    flex-wrap: wrap;
+  }
+
+  .journal-footer .btn {
+    flex: 1 1 45%;
+    min-width: 0;
+    padding: var(--space-md);
+    font-size: 0.75rem;
+    min-height: 44px;    /* Touch target */
+  }
+
+  /* Score display smaller */
+  .score-ring {
+    width: 80px;
+    height: 80px;
+  }
+
+  .score-value {
+    font-size: 1.6rem;
+  }
+
+  /* Compact correction cards */
+  .correction-card {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .corrections-list {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  /* Sidebar width */
+  .sidebar {
+    width: 280px;
+  }
+
+  /* Toast positioning */
+  .toast-container {
+    left: var(--space-md);
+    right: var(--space-md);
+    bottom: var(--space-md);
+  }
+
+  .toast {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   19. RESPONSIVE — SMALL PHONE (≤ 480px)
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 480px) {
+  :root {
+    --header-height: 54px;
+  }
+
+  .header-title {
+    font-size: 1rem;
+  }
+
+  .header-subtitle {
+    display: none;   /* Hide subtitle on very small screens */
+  }
+
+  /* Full-width stacked buttons */
+  .journal-footer {
+    flex-direction: column;
+  }
+
+  .journal-footer .btn {
+    flex: none;
+    width: 100%;
+  }
+
+  /* Hide button labels, show only icons on tiny screens */
+  .btn-label {
+    display: none;
+  }
+
+  .btn-icon {
+    font-size: 1.2rem;
+  }
+
+  .journal-footer .btn {
+    padding: var(--space-md);
+    justify-content: center;
+  }
+
+  .sidebar {
+    width: 100%;  /* Full screen drawer */
+  }
+
+  /* Even smaller editor text */
+  .highlight-layer,
+  .editor-textarea {
+    font-size: 15px;
+    padding: var(--space-sm) var(--space-md);
+    padding-top: 18px;
+  }
+
+  .journal-header {
+    padding: 0;
+  }
+
+  .count-badge {
+    font-size: 0.68rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   20. PRINT STYLES
+   -------------------------------------------------------------------------- */
+
+@media print {
+  .app-header,
+  .sidebar,
+  .journal-header,
+  .journal-footer,
+  .loading-overlay,
+  .sidebar-backdrop,
+  .toast-container,
+  .sidebar-toggle {
+    display: none !important;
+  }
+
+  body {
+    overflow: visible;
+    height: auto;
+    background: #fff;
+    color: #000;
+  }
+
+  body::before,
+  body::after {
+    display: none;
+  }
+
+  .app-layout {
+    display: block;
+    height: auto;
+    margin-top: 0;
+  }
+
+  .journal-area {
+    padding: 0;
+  }
+
+  .journal-container {
+    box-shadow: none;
+    border-radius: 0;
+    background: #fff;
+    position: static;
+    height: auto;
+  }
+
+  .editor-textarea {
+    position: static;
+    height: auto;
+    color: #000;
+    font-size: 12pt;
+    padding: 0;
+  }
+
+  .highlight-layer {
+    display: none;
+  }
+}

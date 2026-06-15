@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Red Dead Editor — Practice your English writing with AI-powered corrections, styled in the rugged aesthetic of the Old West, circa 1899.">
+  <meta name="theme-color" content="#1a1210">
+  <title>Red Dead Editor — English Writing Practice</title>
+
+  <!-- Preload critical fonts for faster rendering -->
+  <link rel="preload" href="assets/red.woff" as="font" type="font/woff" crossorigin>
+  <link rel="preload" href="assets/redT.woff" as="font" type="font/woff" crossorigin>
+
+  <!-- Google Fonts — Lora for that literary, old-world serif feel -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- =====================================================
+       APP HEADER — Fixed top bar with title and mobile toggles
+       ===================================================== -->
+  <header class="app-header">
+    <!-- Left toggle: opens history sidebar on mobile -->
+    <button class="sidebar-toggle history-toggle" id="history-toggle-btn" aria-label="Toggle journal history">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+
+    <!-- Center: Branding -->
+    <div class="header-brand">
+      <h1 class="header-title">RED DEAD EDITOR</h1>
+      <p class="header-subtitle">English Writing Practice · Est. 1899</p>
+    </div>
+
+    <!-- Right toggle: opens corrections sidebar on mobile -->
+    <button class="sidebar-toggle corrections-toggle" id="corrections-toggle-btn" aria-label="Toggle corrections panel">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+        <polyline points="10 9 9 9 8 9"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- =====================================================
+       MAIN THREE-COLUMN LAYOUT
+       ===================================================== -->
+  <main class="app-layout">
+
+    <!-- ===== LEFT: History Sidebar ===== -->
+    <aside class="sidebar history-sidebar" id="history-sidebar">
+      <div class="sidebar-header">
+        <h2 class="sidebar-title">
+          <!-- Quill/book icon -->
+          <svg class="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            <line x1="12" y1="6" x2="16" y2="6"/>
+            <line x1="12" y1="10" x2="16" y2="10"/>
+          </svg>
+          Journal Entries
+        </h2>
+      </div>
+
+      <!-- Dynamically populated history list -->
+      <div class="history-list" id="history-list">
+        <!-- History items are rendered by JS. Structure per item:
+          <div class="history-item" data-id="...">
+            <div class="history-item-header">
+              <span class="history-item-title">First line of text...</span>
+              <button class="history-item-delete" aria-label="Delete entry">&times;</button>
+            </div>
+            <span class="history-item-date">Jun 15, 1899</span>
+            <p class="history-item-preview">Preview of the text...</p>
+          </div>
+        -->
+      </div>
+
+      <!-- New entry button pinned at bottom -->
+      <div class="sidebar-footer">
+        <button class="btn btn-new-entry" id="btn-new-entry">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          New Entry
+        </button>
+      </div>
+    </aside>
+
+    <!-- ===== CENTER: Journal Writing Area ===== -->
+    <section class="journal-area">
+      <!-- Top bar with counts -->
+      <div class="journal-header">
+        <div class="journal-counts">
+          <span class="count-badge" id="word-count" title="Word count">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+            <span class="count-value">0</span> words
+          </span>
+          <span class="count-badge" id="char-count" title="Character count">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+            <span class="count-value">0</span> chars
+          </span>
+        </div>
+      </div>
+
+      <!-- The dual-layer editor container -->
+      <div class="journal-container">
+        <!-- Highlight layer: sits behind the textarea, shows colored marks -->
+        <div class="highlight-layer" id="highlight-layer" aria-hidden="true"></div>
+
+        <!-- The actual editable textarea -->
+        <textarea
+          id="editor-textarea"
+          class="editor-textarea"
+          placeholder="Begin your journal entry here, partner...&#10;&#10;Write about your day on the frontier, a tale from the trail, or anything that comes to mind. When you're ready, hit Evaluate to get your writing checked by the scribes."
+          spellcheck="false"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="sentences"
+        ></textarea>
+
+        <!-- Loading overlay — shown during API operations -->
+        <div class="loading-overlay" id="loading-overlay">
+          <div class="loading-spinner">
+            <div class="spinner-ring"></div>
+            <div class="spinner-ring"></div>
+            <div class="spinner-ring"></div>
+          </div>
+          <p class="loading-text">The scribes are at work...</p>
+        </div>
+      </div>
+
+      <!-- Action buttons row -->
+      <div class="journal-footer">
+        <button class="btn btn-evaluate" id="btn-evaluate" title="Analyze your writing for errors">
+          <span class="btn-icon">⚡</span>
+          <span class="btn-label">Evaluate</span>
+        </button>
+        <button class="btn btn-rewrite" id="btn-rewrite" title="Rewrite selected sentence">
+          <span class="btn-icon">✍</span>
+          <span class="btn-label">Rewrite</span>
+        </button>
+        <button class="btn btn-hone" id="btn-hone" title="Polish the entire text">
+          <span class="btn-icon">💎</span>
+          <span class="btn-label">Hone</span>
+        </button>
+        <button class="btn btn-save" id="btn-save" title="Save to journal (Ctrl+S)">
+          <span class="btn-icon">📜</span>
+          <span class="btn-label">Save</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ===== RIGHT: Corrections Sidebar ===== -->
+    <aside class="sidebar corrections-sidebar" id="corrections-sidebar">
+      <div class="sidebar-header">
+        <h2 class="sidebar-title">
+          <svg class="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+          Corrections &amp; Suggestions
+        </h2>
+      </div>
+
+      <!-- Overall score display -->
+      <div class="score-display" id="score-display">
+        <div class="score-ring">
+          <svg class="score-svg" viewBox="0 0 120 120">
+            <circle class="score-track" cx="60" cy="60" r="52"/>
+            <circle class="score-fill" cx="60" cy="60" r="52"/>
+          </svg>
+          <span class="score-value">—</span>
+        </div>
+        <span class="score-label">Writing Score</span>
+      </div>
+
+      <!-- Summary text -->
+      <div class="summary-text" id="summary-text">
+        <p>Write something and hit <strong>Evaluate</strong> to receive your assessment.</p>
+      </div>
+
+      <!-- Corrections list -->
+      <div class="corrections-list" id="corrections-list">
+        <!-- Correction cards rendered by JS. Structure:
+          <div class="correction-card" data-error-index="0">
+            <span class="error-badge error-grammar">Grammar</span>
+            <div class="correction-original"><del>original text</del></div>
+            <div class="correction-suggestion"><ins>suggested text</ins></div>
+            <p class="correction-explanation">Explanation here...</p>
+            <button class="btn btn-apply-fix">Apply Fix</button>
+          </div>
+        -->
+      </div>
+
+      <!-- TTS audio player -->
+      <div class="tts-player" id="tts-player">
+        <div class="tts-header">
+          <span class="tts-label">🔊 Voice Playback</span>
+          <span class="tts-voice">Charlotte</span>
+        </div>
+        <div class="tts-controls">
+          <button class="tts-play-btn" id="tts-play-btn" aria-label="Play audio">
+            <svg class="tts-icon-play" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            <svg class="tts-icon-pause" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:none">
+              <rect x="6" y="4" width="4" height="16"/>
+              <rect x="14" y="4" width="4" height="16"/>
+            </svg>
+          </button>
+          <div class="tts-waveform">
+            <div class="tts-progress" id="tts-progress"></div>
+          </div>
+        </div>
+        <audio id="tts-audio" preload="none"></audio>
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- Mobile sidebar backdrop overlay -->
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <!-- Toast notification container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- App logic -->
+  <script src="app.js"></script>
+</body>
+</html>

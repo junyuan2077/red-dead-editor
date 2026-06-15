@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  web_test:
+    image: nginx:alpine
+    container_name: my_test_container
+    restart: always
+    # 注意：这里限制了 127.0.0.1，意味着这个 8080 端口只允许 VPS 本地访问，外网无法直接通过 IP:8080 访问，非常安全
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./html:/usr/share/nginx/html

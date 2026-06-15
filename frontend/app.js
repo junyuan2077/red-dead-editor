@@ -373,6 +373,7 @@ async function evaluate() {
     if (AppState.overallScore !== null) {
       showToast(`Score: ${AppState.overallScore}/100 — ${AppState.errors.length} issue${AppState.errors.length !== 1 ? 's' : ''} found`, 'success');
     }
+    saveActiveSession();
   } catch (err) {
     console.error('Evaluate error:', err);
     showToast('The scribes encountered an error. Try again.', 'error');
@@ -420,6 +421,7 @@ async function rewrite() {
     await playTTS(rewritten);
 
     showToast('Sentence rewritten successfully.', 'success');
+    saveActiveSession();
   } catch (err) {
     console.error('Rewrite error:', err);
     showToast('Rewrite failed. Try again.', 'error');
@@ -461,6 +463,7 @@ async function hone() {
     }
 
     showToast('Your writing has been polished.', 'success');
+    saveActiveSession();
   } catch (err) {
     console.error('Hone error:', err);
     showToast('Honing failed. Try again.', 'error');
@@ -611,6 +614,7 @@ function loadEntry(id) {
 
   // Close sidebar on mobile
   closeSidebars();
+  saveActiveSession();
 }
 
 /**
@@ -649,6 +653,7 @@ function newEntry() {
 
   DOM.textarea.focus();
   closeSidebars();
+  saveActiveSession();
 }
 
 /* --------------------------------------------------------------------------
@@ -892,6 +897,7 @@ function applyFix(errorIndex) {
   updateCounts();
 
   showToast('Fix applied.', 'success');
+  saveActiveSession();
 }
 
 /**
@@ -945,6 +951,7 @@ function undoFix(fixIndex) {
   updateCounts();
 
   showToast('Fix undone.', 'info');
+  saveActiveSession();
 }
 
 /* --------------------------------------------------------------------------
@@ -1043,6 +1050,7 @@ function toggleHistorySidebar() {
 
   DOM.historySidebar?.classList.toggle('open', AppState.historySidebarOpen);
   updateBackdrop();
+  saveActiveSession();
 }
 
 function toggleCorrectionsSidebar() {
@@ -1056,12 +1064,14 @@ function toggleCorrectionsSidebar() {
 
   DOM.correctionsSidebar?.classList.toggle('open', AppState.correctionsSidebarOpen);
   updateBackdrop();
+  saveActiveSession();
 }
 
 function openCorrectionsSidebar() {
   AppState.correctionsSidebarOpen = true;
   DOM.correctionsSidebar?.classList.add('open');
   updateBackdrop();
+  saveActiveSession();
 }
 
 function closeSidebars() {
@@ -1070,6 +1080,7 @@ function closeSidebars() {
   DOM.historySidebar?.classList.remove('open');
   DOM.correctionsSidebar?.classList.remove('open');
   updateBackdrop();
+  saveActiveSession();
 }
 
 function updateBackdrop() {
@@ -1109,6 +1120,61 @@ function formatDate(isoString) {
   }
 }
 
+/**
+ * Save current active editor and evaluation state to localStorage.
+ */
+function saveActiveSession() {
+  const session = {
+    text: DOM.textarea ? DOM.textarea.value : '',
+    currentEntryId: AppState.currentEntryId,
+    errors: AppState.errors,
+    appliedFixes: AppState.appliedFixes,
+    overallScore: AppState.overallScore,
+    summary: AppState.summary,
+    correctionsSidebarOpen: AppState.correctionsSidebarOpen,
+    historySidebarOpen: AppState.historySidebarOpen
+  };
+  localStorage.setItem('rde_active_session', JSON.stringify(session));
+}
+
+/**
+ * Restore active editor and evaluation state from localStorage if it exists.
+ * @returns {boolean} true if session was restored, false otherwise
+ */
+function restoreActiveSession() {
+  const dataStr = localStorage.getItem('rde_active_session');
+  if (!dataStr) return false;
+  try {
+    const session = JSON.parse(dataStr);
+    if (!session) return false;
+
+    if (DOM.textarea) DOM.textarea.value = session.text || '';
+    AppState.currentEntryId = session.currentEntryId ?? null;
+    AppState.errors = session.errors || [];
+    AppState.appliedFixes = session.appliedFixes || [];
+    AppState.overallScore = session.overallScore ?? null;
+    AppState.summary = session.summary || '';
+    AppState.correctionsSidebarOpen = session.correctionsSidebarOpen || false;
+    AppState.historySidebarOpen = session.historySidebarOpen || false;
+
+    // Render components
+    renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+    updateCounts();
+    updateScoreDisplay(AppState.overallScore);
+
+    // Sync sidebars
+    DOM.historySidebar?.classList.toggle('open', AppState.historySidebarOpen);
+    DOM.correctionsSidebar?.classList.toggle('open', AppState.correctionsSidebarOpen);
+    updateBackdrop();
+
+    return true;
+  } catch (err) {
+    console.warn('Failed to restore active session:', err);
+    return false;
+  }
+}
+
 /* --------------------------------------------------------------------------
    15. EVENT LISTENERS
    -------------------------------------------------------------------------- */
@@ -1120,6 +1186,7 @@ function setupEventListeners() {
     // Re-render highlights with current errors and applied fixes (keeps marks in sync with edits)
     renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
     syncHighlightScroll();
+    saveActiveSession();
   });
 
   DOM.textarea?.addEventListener('scroll', () => {
@@ -1266,10 +1333,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Update counts (empty state)
   updateCounts();
 
-  // Load the most recent entry if one exists
-  const entries = getEntries();
-  if (entries.length > 0) {
-    loadEntry(entries[0].id);
+  // Load the active session if present, otherwise load the most recent entry
+  const restored = restoreActiveSession();
+  if (!restored) {
+    const entries = getEntries();
+    if (entries.length > 0) {
+      loadEntry(entries[0].id);
+    }
   }
 
   // Wire up all event listeners

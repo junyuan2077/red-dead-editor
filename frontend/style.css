@@ -164,12 +164,12 @@ body::before {
   inset: 0;
   z-index: -2;
   background:
-    /* Dark overlay gradient for extra depth */
+    /* Dark overlay gradient for extra depth - opacity lowered to reveal the background image */
     linear-gradient(
       180deg,
-      rgba(var(--bg-deep-rgb), 0.92) 0%,
-      rgba(var(--bg-deep-rgb), 0.85) 50%,
-      rgba(var(--bg-deep-rgb), 0.95) 100%
+      rgba(var(--bg-deep-rgb), 0.6) 0%,
+      rgba(var(--bg-deep-rgb), 0.45) 50%,
+      rgba(var(--bg-deep-rgb), 0.65) 100%
     ),
     url('assets/background.jpg') center / cover no-repeat fixed;
   background-color: var(--bg-deep);

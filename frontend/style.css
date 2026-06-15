@@ -593,9 +593,16 @@ body::after {
 /* --- Error highlight marks --- */
 .highlight-layer mark {
   color: transparent;
+  background-color: transparent !important; /* Remove solid yellow background */
+  border-bottom: 2px dashed var(--red-glow);
   border-radius: 2px;
   padding: 0;
   position: relative;
+  transition: background-color var(--transition-fast);
+}
+
+.highlight-layer mark.mark-hover {
+  background-color: rgba(229, 57, 53, 0.25) !important; /* Semi-transparent dark red background on hover */
 }
 
 .mark-grammar,
@@ -603,10 +610,6 @@ body::after {
 .mark-style,
 .mark-vocabulary {
   background: transparent;
-  text-decoration: underline dotted var(--red-glow);
-  text-decoration-skip-ink: none;
-  text-underline-offset: 4px;
-  text-decoration-thickness: 2px;
 }
 
 /* --- Loading overlay --- */

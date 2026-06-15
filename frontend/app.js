@@ -1064,6 +1064,33 @@ function setupEventListeners() {
     }
   });
 
+  // --- Delegated hover: highlight corresponding target mark ---
+  DOM.correctionsList?.addEventListener('mouseover', (e) => {
+    const card = e.target.closest('.correction-card');
+    if (card) {
+      const index = card.getAttribute('data-error-index');
+      if (index !== null) {
+        const mark = DOM.highlightLayer?.querySelector(`mark[data-error-index="${index}"]`);
+        if (mark) {
+          mark.classList.add('mark-hover');
+        }
+      }
+    }
+  });
+
+  DOM.correctionsList?.addEventListener('mouseout', (e) => {
+    const card = e.target.closest('.correction-card');
+    if (card) {
+      const index = card.getAttribute('data-error-index');
+      if (index !== null) {
+        const mark = DOM.highlightLayer?.querySelector(`mark[data-error-index="${index}"]`);
+        if (mark) {
+          mark.classList.remove('mark-hover');
+        }
+      }
+    }
+  });
+
   // --- TTS play/pause ---
   DOM.ttsPlayBtn?.addEventListener('click', toggleTTSPlayback);
 

@@ -71,7 +71,7 @@
   /* === Sizing === */
   --header-height: 72px;
   --sidebar-width-left:  280px;
-  --sidebar-width-right: 320px;
+  --sidebar-width-right: 480px;
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -503,7 +503,7 @@ body::after {
   color: var(--parchment-dark);
 }
 
-/* --- Journal container: the parchment surface --- */
+/* --- Journal container: the transparent writing surface --- */
 .journal-container {
   position: relative;
   flex: 1;
@@ -512,32 +512,34 @@ body::after {
   box-shadow:
     var(--shadow-lg),
     var(--shadow-inset),
-    0 0 0 1px rgba(199, 164, 74, 0.06);
+    0 0 0 1px rgba(199, 164, 74, 0.15);
 
-  /* Aged parchment background with subtle noise */
-  background-color: var(--parchment);
+  /* Semi-transparent dark slate background to allow background.jpg to show through */
+  background-color: rgba(26, 18, 16, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   background-image:
-    /* Faint ruled lines */
+    /* Faint ruled lines in gold/white for dark mode */
     repeating-linear-gradient(
       to bottom,
       transparent,
       transparent 31px,
-      rgba(44, 24, 16, 0.06) 31px,
-      rgba(44, 24, 16, 0.06) 32px
+      rgba(199, 164, 74, 0.08) 31px,
+      rgba(199, 164, 74, 0.08) 32px
     ),
     /* Subtle grain noise (CSS only) */
     url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
 }
 
-/* Aged edge effect on the parchment */
+/* Aged edge effect on the writing surface */
 .journal-container::before {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: var(--radius-lg);
   box-shadow:
-    inset 0 0 60px rgba(44, 24, 16, 0.15),
-    inset 0 0 120px rgba(44, 24, 16, 0.08);
+    inset 0 0 60px rgba(0, 0, 0, 0.45),
+    inset 0 0 120px rgba(0, 0, 0, 0.3);
   pointer-events: none;
   z-index: 3;
 }
@@ -574,8 +576,8 @@ body::after {
 /* Textarea: transparent background so highlight shows through */
 .editor-textarea {
   background: transparent;
-  color: var(--ink);
-  caret-color: var(--red-deep);
+  color: #f5f5f0; /* Chalk white */
+  caret-color: var(--gold);
   resize: none;
   outline: none;
   z-index: 2;
@@ -596,32 +598,15 @@ body::after {
   position: relative;
 }
 
-.mark-grammar {
-  background: var(--err-grammar-bg);
-  text-decoration: underline wavy var(--err-grammar);
-  text-decoration-skip-ink: none;
-  text-underline-offset: 3px;
-}
-
-.mark-spelling {
-  background: var(--err-spelling-bg);
-  text-decoration: underline wavy var(--err-spelling);
-  text-decoration-skip-ink: none;
-  text-underline-offset: 3px;
-}
-
-.mark-style {
-  background: var(--err-style-bg);
-  text-decoration: underline wavy var(--err-style);
-  text-decoration-skip-ink: none;
-  text-underline-offset: 3px;
-}
-
+.mark-grammar,
+.mark-spelling,
+.mark-style,
 .mark-vocabulary {
-  background: var(--err-vocab-bg);
-  text-decoration: underline dotted var(--err-vocabulary);
+  background: transparent;
+  text-decoration: underline dotted var(--red-glow);
   text-decoration-skip-ink: none;
-  text-underline-offset: 3px;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 2px;
 }
 
 /* --- Loading overlay --- */

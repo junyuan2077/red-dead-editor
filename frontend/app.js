@@ -933,6 +933,9 @@ function undoFix(fixIndex) {
   };
   AppState.errors.push(restoredError);
 
+  // Sort errors by start offset to restore original position in the sidebar
+  AppState.errors.sort((a, b) => a.start - b.start);
+
   // Remove this fix from appliedFixes
   AppState.appliedFixes.splice(fixIndex, 1);
 

@@ -58,7 +58,7 @@ CLI_MODEL_NAME = "claude-opus-4-6"
 # CLI_MODEL_NAME = "gemini-3.5-flash"
 
 # API model (used by Google GenAI SDK)
-API_MODEL_NAME = "gemini-3.5-flash"
+API_MODEL_NAME = "gemini-3.5-pro"
 
 # Initialize Google AI if API key is available
 API_KEY = os.getenv("GOOGLE_API_KEY")

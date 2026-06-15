@@ -552,7 +552,7 @@ body::after {
   width: 100%;
   height: 100%;
   font-family: 'RedDead', 'Georgia', serif;
-  font-size: 18px;
+  font-size: 1.3em; /* Increased textarea and highlight-layer font size to 1.3em */
   line-height: 1.8;
   padding: var(--space-lg);
   padding-top: 28px; /* align with ruled lines */
@@ -993,85 +993,7 @@ body::after {
   box-shadow: 0 0 12px rgba(198, 40, 40, 0.3);
 }
 
-/* --------------------------------------------------------------------------
-   12. TTS PLAYER
-   -------------------------------------------------------------------------- */
-
-.tts-player {
-  margin: var(--space-md) var(--space-lg) var(--space-lg);
-  background: rgba(var(--bg-deep-rgb), 0.7);
-  border: 1px solid rgba(199, 164, 74, 0.12);
-  border-radius: var(--radius-md);
-  padding: var(--space-md);
-}
-
-.tts-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-md);
-}
-
-.tts-label {
-  font-family: 'RedDeadText', 'Lora', serif;
-  font-size: 0.8rem;
-  color: var(--gold);
-  letter-spacing: 0.06em;
-}
-
-.tts-voice {
-  font-size: 0.72rem;
-  font-style: italic;
-  color: var(--text-muted);
-}
-
-.tts-controls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-}
-
-.tts-play-btn {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 2px solid var(--gold-dim);
-  background: transparent;
-  color: var(--gold);
-  flex-shrink: 0;
-  transition:
-    background var(--transition-fast),
-    border-color var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.tts-play-btn:hover {
-  background: var(--red-deep);
-  border-color: var(--gold);
-  color: #fff;
-}
-
-.tts-play-btn.playing .tts-icon-play  { display: none; }
-.tts-play-btn.playing .tts-icon-pause { display: block !important; }
-
-.tts-waveform {
-  flex: 1;
-  height: 4px;
-  background: rgba(199, 164, 74, 0.15);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.tts-progress {
-  height: 100%;
-  width: 0%;
-  background: var(--gold);
-  border-radius: 2px;
-  transition: width 0.1s linear;
-}
+/* TTS player styles removed */
 
 /* --------------------------------------------------------------------------
    13. SIDEBAR BACKDROP (Mobile)

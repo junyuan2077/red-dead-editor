@@ -19,9 +19,7 @@
    -------------------------------------------------------------------------- */
 
 const API_BASE      = '';                // Base URL for API calls (empty = same origin)
-const DB_NAME       = 'rdo_audio_cache'; // IndexedDB database name
-const DB_VERSION    = 1;
-const STORE_NAME    = 'audio';           // Object store for cached audio blobs
+
 const TOAST_DURATION = 3000;             // Toast auto-dismiss in milliseconds
 const STORAGE_KEY   = 'rdo_entries';     // LocalStorage key for journal entries
 
@@ -85,10 +83,7 @@ function initDOMReferences() {
   DOM.scoreDisplay    = document.getElementById('score-display');
   DOM.summaryText     = document.getElementById('summary-text');
 
-  // TTS
-  DOM.ttsPlayBtn     = document.getElementById('tts-play-btn');
-  DOM.ttsAudio       = document.getElementById('tts-audio');
-  DOM.ttsProgress    = document.getElementById('tts-progress');
+
 
   // Toast
   DOM.toastContainer = document.getElementById('toast-container');
@@ -245,90 +240,7 @@ async function apiHone(text) {
   return res.json();
 }
 
-/**
- * Request TTS audio for a given text.
- * Returns an audio Blob (e.g., MP3 or WAV).
- */
-async function apiTTS(text) {
-  const res = await fetch(`${API_BASE}/api/tts`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  });
-  if (!res.ok) throw new Error(`TTS failed: ${res.status}`);
-  return res.blob();
-}
 
-/* --------------------------------------------------------------------------
-   6. INDEXEDDB AUDIO CACHE
-   Caches TTS audio blobs locally to avoid redundant API calls.
-   -------------------------------------------------------------------------- */
-
-/**
- * Open (or create) the IndexedDB database.
- * @returns {Promise<IDBDatabase>}
- */
-function openAudioDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'key' });
-      }
-    };
-    request.onsuccess = (e) => resolve(e.target.result);
-    request.onerror   = (e) => reject(e.target.error);
-  });
-}
-
-/**
- * Generate a simple hash string from text for use as a cache key.
- * Uses a fast FNV-1a inspired hash.
- */
-function hashText(text) {
-  let hash = 0x811c9dc5; // FNV offset basis
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = (hash * 0x01000193) >>> 0; // FNV prime, keep as unsigned 32-bit
-  }
-  return 'tts_' + hash.toString(36);
-}
-
-/**
- * Retrieve a cached audio blob from IndexedDB.
- * @returns {Promise<Blob|null>}
- */
-async function getCachedAudio(text) {
-  try {
-    const db  = await openAudioDB();
-    const key = hashText(text);
-    return new Promise((resolve) => {
-      const tx    = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req   = store.get(key);
-      req.onsuccess = () => resolve(req.result ? req.result.blob : null);
-      req.onerror   = () => resolve(null);
-    });
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Store an audio blob in IndexedDB.
- */
-async function cacheAudio(text, blob) {
-  try {
-    const db  = await openAudioDB();
-    const key = hashText(text);
-    const tx    = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    store.put({ key, blob, text, timestamp: Date.now() });
-  } catch (err) {
-    console.warn('Audio cache write failed:', err);
-  }
-}
 
 /* --------------------------------------------------------------------------
    7. CORE OPERATIONS
@@ -417,8 +329,7 @@ async function rewrite() {
     // Show the rewrite result in the corrections sidebar
     renderRewriteResult(selectedText, rewritten, data.explanation || '');
 
-    // Play TTS for the rewritten sentence
-    await playTTS(rewritten);
+
 
     showToast('Sentence rewritten successfully.', 'success');
     saveActiveSession();
@@ -476,66 +387,7 @@ async function hone() {
    8. TTS PLAYBACK
    -------------------------------------------------------------------------- */
 
-/**
- * Play TTS audio for the given text.
- * Checks IndexedDB cache first; falls back to API.
- */
-async function playTTS(text) {
-  if (!text) return;
 
-  try {
-    // Check cache first
-    let blob = await getCachedAudio(text);
-
-    if (!blob) {
-      blob = await apiTTS(text);
-      await cacheAudio(text, blob);
-    }
-
-    const url = URL.createObjectURL(blob);
-    DOM.ttsAudio.src = url;
-    DOM.ttsAudio.play();
-    DOM.ttsPlayBtn.classList.add('playing');
-
-    // Update progress bar as audio plays
-    DOM.ttsAudio.ontimeupdate = () => {
-      if (DOM.ttsAudio.duration) {
-        const pct = (DOM.ttsAudio.currentTime / DOM.ttsAudio.duration) * 100;
-        DOM.ttsProgress.style.width = `${pct}%`;
-      }
-    };
-
-    // Cleanup when playback ends
-    DOM.ttsAudio.onended = () => {
-      DOM.ttsPlayBtn.classList.remove('playing');
-      DOM.ttsProgress.style.width = '0%';
-      URL.revokeObjectURL(url);
-    };
-
-    DOM.ttsAudio.onerror = () => {
-      DOM.ttsPlayBtn.classList.remove('playing');
-      DOM.ttsProgress.style.width = '0%';
-      URL.revokeObjectURL(url);
-    };
-  } catch (err) {
-    console.warn('TTS playback failed:', err);
-  }
-}
-
-/**
- * Toggle play/pause on the TTS audio element.
- */
-function toggleTTSPlayback() {
-  if (!DOM.ttsAudio.src || DOM.ttsAudio.src === window.location.href) return;
-
-  if (DOM.ttsAudio.paused) {
-    DOM.ttsAudio.play();
-    DOM.ttsPlayBtn.classList.add('playing');
-  } else {
-    DOM.ttsAudio.pause();
-    DOM.ttsPlayBtn.classList.remove('playing');
-  }
-}
 
 /* --------------------------------------------------------------------------
    9. LOCALSTORAGE PERSISTENCE
@@ -1272,8 +1124,7 @@ function setupEventListeners() {
     }
   });
 
-  // --- TTS play/pause ---
-  DOM.ttsPlayBtn?.addEventListener('click', toggleTTSPlayback);
+
 
   // --- Keyboard shortcuts ---
   document.addEventListener('keydown', (e) => {

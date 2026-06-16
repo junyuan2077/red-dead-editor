@@ -21,7 +21,7 @@ Each object must have the following fields:
 - "original": The exact text fragment that is incorrect.
 - "replacement": The suggested correction.
 - "type": One of "Grammar", "Spelling", or "Style". (If combined, choose the most prominent type, e.g., "Grammar").
-- "reason": A brief explanation of the error(s).
+- "reason": A succinct clarification of the error(s).
 - "offset": The zero-based starting character index of the "original" text in the input.
 - "length": The length of the "original" text.
 

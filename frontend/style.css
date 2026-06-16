@@ -882,72 +882,7 @@ body::after {
   overflow-y: auto;
 }
 
-/* --- Score Display --- */
-.score-display {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--space-lg);
-  gap: var(--space-sm);
-}
 
-.score-ring {
-  position: relative;
-  width: 100px;
-  height: 100px;
-}
-
-.score-svg {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-
-.score-track {
-  fill: none;
-  stroke: rgba(199, 164, 74, 0.12);
-  stroke-width: 6;
-}
-
-.score-fill {
-  fill: none;
-  stroke: var(--gold);
-  stroke-width: 6;
-  stroke-linecap: round;
-  stroke-dasharray: 326.73;     /* 2 * π * 52 */
-  stroke-dashoffset: 326.73;    /* Fully hidden by default */
-  transition: stroke-dashoffset 1s ease, stroke 0.5s ease;
-}
-
-.score-value {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: 'RedDead', 'Georgia', serif;
-  font-size: 2rem;
-  color: var(--gold);
-  text-shadow: 0 2px 8px rgba(0,0,0,0.4);
-}
-
-.score-label {
-  font-family: 'RedDeadText', 'Lora', serif;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-/* Score color states */
-.score-display.score-high .score-fill  { stroke: #4caf50; }
-.score-display.score-high .score-value { color: #4caf50; }
-
-.score-display.score-mid .score-fill   { stroke: var(--gold); }
-.score-display.score-mid .score-value  { color: var(--gold); }
-
-.score-display.score-low .score-fill   { stroke: var(--red-bright); }
-.score-display.score-low .score-value  { color: var(--red-bright); }
 
 /* --- Summary Text --- */
 .summary-text {
@@ -1359,15 +1294,7 @@ body::after {
     min-height: 44px;    /* Touch target */
   }
 
-  /* Score display smaller */
-  .score-ring {
-    width: 80px;
-    height: 80px;
-  }
 
-  .score-value {
-    font-size: 1.6rem;
-  }
 
   /* Compact correction cards */
   .correction-card {

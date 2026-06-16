@@ -45,6 +45,7 @@ const AppState = {
   lastRestoredError:     null,
   inRewriteMode:         false,
   rewriteSentences:      [],
+  activeRewriteIndex:    null,
 };
 
 /* --------------------------------------------------------------------------
@@ -85,7 +86,6 @@ function initDOMReferences() {
 
   // Corrections
   DOM.correctionsList = document.getElementById('corrections-list');
-  DOM.scoreDisplay    = document.getElementById('score-display');
   DOM.summaryText     = document.getElementById('summary-text');
 
 
@@ -310,8 +310,9 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
     
     const originalHtml = renderSubstringWithHighlights(text, item.start, item.end, errors, appliedFixes);
     
+    const isActive = (i === AppState.activeRewriteIndex);
     html += `
-      <div class="interleaved-block" data-index="${i}">
+      <div class="interleaved-block${isActive ? ' active-block' : ''}" data-index="${i}">
         <div class="interleaved-original">${originalHtml}</div>
         <div class="interleaved-rewritten" tabindex="0">${escapeHTML(item.rewritten)}</div>
       </div>`;
@@ -327,6 +328,51 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
   }
 
   DOM.highlightLayer.innerHTML = html + '\n';
+
+  // Restore focus/active state after re-render if activeRewriteIndex is set
+  if (AppState.activeRewriteIndex !== null && AppState.activeRewriteIndex !== undefined) {
+    const activeBlock = DOM.highlightLayer.querySelector(`.interleaved-block[data-index="${AppState.activeRewriteIndex}"]`);
+    if (activeBlock) {
+      const rewrittenEl = activeBlock.querySelector('.interleaved-rewritten');
+      if (rewrittenEl && document.activeElement !== rewrittenEl) {
+        rewrittenEl.focus();
+      }
+    }
+  }
+}
+
+/**
+ * Activate a rewritten sentence block, highlighting it and rendering its explanation in the sidebar.
+ * @param {number} idx - The index of the block to activate
+ * @param {boolean} focusRewritten - If true, programmatically focus the .interleaved-rewritten element
+ */
+function activateRewriteBlock(idx, focusRewritten = false) {
+  if (!AppState.inRewriteMode || !AppState.rewriteSentences) return;
+  const sentence = AppState.rewriteSentences[idx];
+  if (!sentence) return;
+
+  AppState.activeRewriteIndex = idx;
+
+  const blocks = DOM.highlightLayer.querySelectorAll('.interleaved-block');
+  blocks.forEach((b) => {
+    const bIdx = parseInt(b.getAttribute('data-index'), 10);
+    if (bIdx === idx) {
+      b.classList.add('active-block');
+      if (focusRewritten) {
+        const rewrittenEl = b.querySelector('.interleaved-rewritten');
+        if (rewrittenEl && document.activeElement !== rewrittenEl) {
+          rewrittenEl.focus();
+        }
+      }
+    } else {
+      b.classList.remove('active-block');
+    }
+  });
+
+  renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
+  
+  // Auto-open corrections sidebar
+  openCorrectionsSidebar();
 }
 
 /* --------------------------------------------------------------------------
@@ -412,9 +458,6 @@ async function evaluate() {
     // Render corrections sidebar
     renderCorrections(AppState.errors, AppState.overallScore, AppState.summary, true);
 
-    // Update score display
-    updateScoreDisplay(AppState.overallScore);
-
     // On mobile, auto-open corrections sidebar
     if (window.innerWidth <= 1024) {
       openCorrectionsSidebar();
@@ -475,6 +518,8 @@ function enterRewriteMode(sentences) {
   // Toggle class on container
   DOM.journalContainer?.classList.add('view-rewrite');
 
+  AppState.activeRewriteIndex = null;
+
   // Re-render highlights (which will trigger interleaved view)
   renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
 
@@ -499,6 +544,7 @@ function enterRewriteMode(sentences) {
 function exitRewriteMode() {
   AppState.inRewriteMode = false;
   AppState.rewriteSentences = [];
+  AppState.activeRewriteIndex = null;
 
   // Hide the rewrite banner
   if (DOM.rewriteBanner) {
@@ -688,7 +734,6 @@ function newEntry() {
 
   renderHighlights('', [], []);
   updateCounts();
-  updateScoreDisplay(null);
   clearCorrections();
   renderHistory();
 
@@ -975,8 +1020,6 @@ function renderRewriteResult(original, rewritten, explanation) {
   DOM.correctionsList.innerHTML = `
     <div class="correction-card">
       <span class="error-badge error-style">Rewrite</span>
-      <div class="correction-original"><del>${escapeHTML(original)}</del></div>
-      <div class="correction-suggestion"><ins>${escapeHTML(rewritten)}</ins></div>
       <p class="correction-explanation">${escapeHTML(explanation)}</p>
     </div>`;
   updateButtonStates();
@@ -991,9 +1034,6 @@ function renderHoneResults(improvements) {
   if (DOM.summaryText) {
     DOM.summaryText.innerHTML = `<p><strong>Text polished</strong> — ${improvements.length} improvement${improvements.length !== 1 ? 's' : ''} made.</p>`;
   }
-
-  // Reset score display for hone mode
-  updateScoreDisplay(null);
 
   if (!improvements || improvements.length === 0) {
     DOM.correctionsList.innerHTML = `
@@ -1045,41 +1085,6 @@ function updateCounts() {
   }
 }
 
-/**
- * Update the circular score display.
- * @param {number|null} score — 0-100 or null to reset
- */
-function updateScoreDisplay(score) {
-  if (!DOM.scoreDisplay) return;
-
-  const valueEl = DOM.scoreDisplay.querySelector('.score-value');
-  const fillEl  = DOM.scoreDisplay.querySelector('.score-fill');
-
-  // Remove existing score classes
-  DOM.scoreDisplay.classList.remove('score-high', 'score-mid', 'score-low');
-
-  if (score === null || score === undefined) {
-    if (valueEl) valueEl.textContent = '—';
-    if (fillEl)  fillEl.style.strokeDashoffset = '326.73';
-    return;
-  }
-
-  // Clamp score
-  const s = Math.max(0, Math.min(100, Math.round(score)));
-
-  if (valueEl) valueEl.textContent = s;
-
-  // Animate the ring: full circle = 326.73 (2πr where r=52)
-  if (fillEl) {
-    const offset = 326.73 - (326.73 * s) / 100;
-    fillEl.style.strokeDashoffset = offset.toFixed(2);
-  }
-
-  // Color coding
-  if (s >= 80)      DOM.scoreDisplay.classList.add('score-high');
-  else if (s >= 60) DOM.scoreDisplay.classList.add('score-mid');
-  else              DOM.scoreDisplay.classList.add('score-low');
-}
 
 /**
  * Animate card applying and slide out before invoking applyFix.
@@ -1441,7 +1446,6 @@ function restoreActiveSession() {
     renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
     renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
     updateCounts();
-    updateScoreDisplay(AppState.overallScore);
 
     // Sync sidebars
     DOM.historySidebar?.classList.toggle('open', AppState.historySidebarOpen);
@@ -1676,35 +1680,49 @@ function setupEventListeners() {
     }
   });
 
-  // --- Delegated click: Undo applied fix, open mobile popover on tap, or select rewritten sentence ---
-  DOM.highlightLayer?.addEventListener('click', (e) => {
-    // Clicked a rewritten sentence in rewrite mode
-    const rewrittenEl = e.target.closest('.interleaved-rewritten');
-    if (rewrittenEl) {
-      e.stopPropagation();
-      const blockEl = rewrittenEl.closest('.interleaved-block');
+  // --- Prevent focus loss (blur) when clicking non-focusable elements inside interleaved block ---
+  DOM.highlightLayer?.addEventListener('mousedown', (e) => {
+    if (!AppState.inRewriteMode) return;
+    
+    // If they clicked an applied fix mark, let the click handler undo it (don't prevent default)
+    if (e.target.closest('.mark-applied-fix')) {
+      const blockEl = e.target.closest('.interleaved-block');
       if (blockEl) {
         const idx = parseInt(blockEl.getAttribute('data-index'), 10);
-        const sentence = AppState.rewriteSentences[idx];
-        if (sentence) {
-          DOM.highlightLayer.querySelectorAll('.interleaved-block').forEach((b) => {
-            b.classList.remove('active-block');
-          });
-          blockEl.classList.add('active-block');
-          
-          renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
-          
-          // Auto-open corrections sidebar
-          openCorrectionsSidebar();
-        }
+        AppState.activeRewriteIndex = idx;
       }
       return;
     }
 
+    const blockEl = e.target.closest('.interleaved-block');
+    if (blockEl) {
+      const idx = parseInt(blockEl.getAttribute('data-index'), 10);
+      const rewrittenEl = blockEl.querySelector('.interleaved-rewritten');
+      if (rewrittenEl) {
+        // Prevent default browser behavior of shifting focus away to body/none
+        if (e.target !== rewrittenEl) {
+          e.preventDefault();
+        }
+        activateRewriteBlock(idx, true);
+      }
+    }
+  });
+
+  // --- Delegated click: Undo applied fix, open mobile popover on tap, or select rewritten sentence ---
+  DOM.highlightLayer?.addEventListener('click', (e) => {
     const markApplied = e.target.closest('.mark-applied-fix');
     if (markApplied) {
       const index = parseInt(markApplied.getAttribute('data-fix-index'), 10);
       undoFix(index);
+      return;
+    }
+
+    // Clicked an interleaved block (original or rewritten part)
+    const blockEl = e.target.closest('.interleaved-block');
+    if (blockEl) {
+      e.stopPropagation();
+      const idx = parseInt(blockEl.getAttribute('data-index'), 10);
+      activateRewriteBlock(idx, true);
       return;
     }
 
@@ -1721,13 +1739,8 @@ function setupEventListeners() {
       const blockEl = rewrittenEl.closest('.interleaved-block');
       if (blockEl) {
         const idx = parseInt(blockEl.getAttribute('data-index'), 10);
-        const sentence = AppState.rewriteSentences[idx];
-        if (sentence) {
-          DOM.highlightLayer.querySelectorAll('.interleaved-block').forEach((b) => {
-            b.classList.remove('active-block');
-          });
-          blockEl.classList.add('active-block');
-          renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
+        if (AppState.activeRewriteIndex !== idx) {
+          activateRewriteBlock(idx, false);
         }
       }
     }

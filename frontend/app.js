@@ -512,6 +512,74 @@ function newEntry() {
   saveActiveSession();
 }
 
+/**
+ * Rename a saved entry by replacing its title with an input field.
+ */
+function startRenameEntry(id, titleSpan) {
+  if (titleSpan.querySelector('.history-item-title-input')) {
+    return; // Already editing
+  }
+
+  const currentTitle = titleSpan.textContent.trim();
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'history-item-title-input';
+  input.value = currentTitle;
+  
+  // Inline styling to blend in with the history-item layout
+  input.style.width = '100%';
+  input.style.background = 'rgba(26, 18, 16, 0.8)';
+  input.style.border = '1px solid var(--gold)';
+  input.style.color = 'var(--parchment)';
+  input.style.fontFamily = 'inherit';
+  input.style.fontSize = 'inherit';
+  input.style.padding = '2px 6px';
+  input.style.borderRadius = 'var(--radius-sm)';
+  input.style.outline = 'none';
+
+  // Replace text with the input element
+  titleSpan.textContent = '';
+  titleSpan.appendChild(input);
+  input.focus();
+  input.select();
+
+  let finished = false;
+
+  function finishRename(save) {
+    if (finished) return;
+    finished = true;
+    
+    const newTitle = input.value.trim();
+    if (save && newTitle && newTitle !== currentTitle) {
+      const entries = getEntries();
+      const entry = entries.find((e) => e.id === id);
+      if (entry) {
+        entry.title = newTitle;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      }
+      titleSpan.textContent = newTitle;
+    } else {
+      titleSpan.textContent = currentTitle;
+    }
+    
+    renderHistory();
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      finishRename(true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      finishRename(false);
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    finishRename(true);
+  });
+}
+
 /* --------------------------------------------------------------------------
    10. UI RENDERING FUNCTIONS
    -------------------------------------------------------------------------- */
@@ -541,7 +609,12 @@ function renderHistory() {
         <div class="history-item${isActive ? ' active' : ''}" data-id="${entry.id}">
           <div class="history-item-header">
             <span class="history-item-title">${escapeHTML(entry.title || 'Untitled')}</span>
-            <button class="history-item-delete" data-delete-id="${entry.id}" aria-label="Delete entry" title="Delete">&times;</button>
+            <div class="history-item-actions">
+              <button class="history-item-edit" data-edit-id="${entry.id}" aria-label="Rename entry" title="Rename">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+              </button>
+              <button class="history-item-delete" data-delete-id="${entry.id}" aria-label="Delete entry" title="Delete">&times;</button>
+            </div>
           </div>
           <span class="history-item-date">${dateStr}</span>
           <p class="history-item-preview">${escapeHTML(preview)}</p>
@@ -1334,13 +1407,31 @@ function setupEventListeners() {
   // --- Backdrop click closes sidebars ---
   DOM.sidebarBackdrop?.addEventListener('click', closeSidebars);
 
-  // --- Delegated click: History items (load & delete) ---
+  // --- Delegated click: History items (load, delete & edit) ---
   DOM.historyList?.addEventListener('click', (e) => {
     // Delete button
     const deleteBtn = e.target.closest('[data-delete-id]');
     if (deleteBtn) {
       e.stopPropagation();
       deleteEntry(deleteBtn.dataset.deleteId);
+      return;
+    }
+
+    // Edit button
+    const editBtn = e.target.closest('[data-edit-id]');
+    if (editBtn) {
+      e.stopPropagation();
+      const historyItem = editBtn.closest('.history-item');
+      const titleSpan = historyItem?.querySelector('.history-item-title');
+      if (historyItem && titleSpan) {
+        startRenameEntry(editBtn.dataset.editId, titleSpan);
+      }
+      return;
+    }
+
+    // Ignore clicks inside the title input field
+    if (e.target.classList.contains('history-item-title-input')) {
+      e.stopPropagation();
       return;
     }
 
@@ -1351,6 +1442,18 @@ function setupEventListeners() {
         return; // Already active, don't reload to prevent losing active evaluation/correction data
       }
       loadEntry(item.dataset.id);
+    }
+  });
+
+  // --- Delegated double-click: History item title rename ---
+  DOM.historyList?.addEventListener('dblclick', (e) => {
+    const titleSpan = e.target.closest('.history-item-title');
+    if (titleSpan) {
+      e.stopPropagation();
+      const historyItem = titleSpan.closest('.history-item');
+      if (historyItem && historyItem.dataset.id) {
+        startRenameEntry(historyItem.dataset.id, titleSpan);
+      }
     }
   });
 

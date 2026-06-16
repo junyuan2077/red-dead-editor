@@ -42,6 +42,7 @@ const AppState = {
   currentEntryId:        null,
   overallScore:          null,
   summary:               '',
+  lastRestoredError:     null,
 };
 
 /* --------------------------------------------------------------------------
@@ -65,7 +66,6 @@ function initDOMReferences() {
   DOM.btnEvaluate    = document.getElementById('btn-evaluate');
   DOM.btnRewrite     = document.getElementById('btn-rewrite');
   DOM.btnHone        = document.getElementById('btn-hone');
-  DOM.btnSave        = document.getElementById('btn-save');
   DOM.btnNewEntry    = document.getElementById('btn-new-entry');
 
   // Sidebars
@@ -115,6 +115,7 @@ function syncHighlightScroll() {
  */
 function renderHighlights(text, errors, appliedFixes = []) {
   if (!DOM.highlightLayer) return;
+  removeMobilePopover();
 
   const combined = [];
   if (errors) {
@@ -271,7 +272,7 @@ async function evaluate() {
     renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
 
     // Render corrections sidebar
-    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary, true);
 
     // Update score display
     updateScoreDisplay(AppState.overallScore);
@@ -333,6 +334,7 @@ async function rewrite() {
 
     showToast('Sentence rewritten successfully.', 'success');
     saveActiveSession();
+    autoSaveEntry();
   } catch (err) {
     console.error('Rewrite error:', err);
     showToast('Rewrite failed. Try again.', 'error');
@@ -375,6 +377,7 @@ async function hone() {
 
     showToast('Your writing has been polished.', 'success');
     saveActiveSession();
+    autoSaveEntry();
   } catch (err) {
     console.error('Hone error:', err);
     showToast('Honing failed. Try again.', 'error');
@@ -462,6 +465,7 @@ function loadEntry(id) {
   AppState.appliedFixes = [];
   renderHighlights(entry.text || '', [], []);
   updateCounts();
+  clearCorrections();
   renderHistory(); // Update active state
 
   // Close sidebar on mobile
@@ -547,9 +551,60 @@ function renderHistory() {
 }
 
 /**
+ * Update active/disabled states of Evaluate, Rewrite, and Hone buttons.
+ * Rewrite and Hone buttons are only active when all fixes are applied (AppState.errors is empty).
+ */
+function updateButtonStates() {
+  const hasErrors = AppState.errors && AppState.errors.length > 0;
+  const isLoading = AppState.isLoading;
+
+  if (DOM.btnEvaluate) {
+    DOM.btnEvaluate.disabled = isLoading;
+  }
+  if (DOM.btnRewrite) {
+    DOM.btnRewrite.disabled = isLoading || hasErrors;
+  }
+  if (DOM.btnHone) {
+    DOM.btnHone.disabled = isLoading || hasErrors;
+  }
+}
+
+/**
+ * Automatically saves the current text to the journal entries in localStorage.
+ */
+function autoSaveEntry() {
+  const text = DOM.textarea ? DOM.textarea.value : '';
+  if (!text.trim()) {
+    return;
+  }
+
+  const entry = {
+    id:        AppState.currentEntryId || generateId(),
+    text:      text,
+    title:     text.split('\n')[0].substring(0, 50) || 'Untitled',
+    date:      new Date().toISOString(),
+    wordCount: text.split(/\s+/).filter(Boolean).length,
+  };
+
+  let entries = getEntries();
+  const existingIndex = entries.findIndex((e) => e.id === entry.id);
+
+  if (existingIndex >= 0) {
+    entries[existingIndex] = entry;
+  } else {
+    entries.unshift(entry);
+  }
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  AppState.currentEntryId = entry.id;
+  renderHistory();
+  saveActiveSession();
+}
+
+/**
  * Render correction cards in the corrections sidebar.
  */
-function renderCorrections(errors, score, summary) {
+function renderCorrections(errors, score, summary, triggerStagger = false) {
   if (!DOM.correctionsList) return;
 
   // Summary text
@@ -564,16 +619,35 @@ function renderCorrections(errors, score, summary) {
       <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:0.88rem;font-style:italic;">
         ${score !== null ? 'No issues found — well done, partner!' : 'Evaluate your writing to see corrections here.'}
       </div>`;
+    updateButtonStates();
     return;
   }
+
+  if (triggerStagger) {
+    DOM.correctionsList.classList.add('stagger-in');
+  } else {
+    DOM.correctionsList.classList.remove('stagger-in');
+  }
+
+  const gap = window.getComputedStyle(DOM.correctionsList).gap || '16px';
 
   DOM.correctionsList.innerHTML = errors
     .map((err, i) => {
       const typeName  = capitalize(err.type || 'grammar');
       const typeClass = `error-${err.type || 'grammar'}`;
+      
+      const isRestored = AppState.lastRestoredError && 
+                         AppState.lastRestoredError.start === err.start && 
+                         AppState.lastRestoredError.original === err.original;
+
+      const extraClass = isRestored ? 'card-entering' : '';
+      
+      const inlineStyle = isRestored
+        ? `style="height:0px; margin-top:0px; margin-bottom:-${gap}; padding-top:0px; padding-bottom:0px; border-top-width:0px; border-bottom-width:0px; opacity:0; transform:translateX(120%); overflow:hidden; animation-delay:0s;"`
+        : `style="animation-delay:${i * 0.05}s;"`;
 
       return `
-        <div class="correction-card" data-error-index="${i}" style="animation-delay:${i * 0.05}s">
+        <div class="correction-card ${extraClass}" data-error-index="${i}" ${inlineStyle}>
           <span class="error-badge ${typeClass}">${typeName}</span>
           <div class="correction-original"><del>${escapeHTML(err.original || '')}</del></div>
           <div class="correction-suggestion"><ins>${escapeHTML(err.suggestion || '')}</ins></div>
@@ -582,6 +656,57 @@ function renderCorrections(errors, score, summary) {
         </div>`;
     })
     .join('');
+
+  if (triggerStagger) {
+    setTimeout(() => {
+      DOM.correctionsList?.classList.remove('stagger-in');
+    }, 1200);
+  }
+
+  // Handle entering animation for restored card
+  const enteringCard = DOM.correctionsList.querySelector('.card-entering');
+  if (enteringCard) {
+    const origStyle = enteringCard.getAttribute('style');
+    
+    enteringCard.style.height = '';
+    enteringCard.style.paddingTop = '';
+    enteringCard.style.paddingBottom = '';
+    enteringCard.style.marginTop = '';
+    enteringCard.style.marginBottom = '';
+    enteringCard.style.borderTopWidth = '';
+    enteringCard.style.borderBottomWidth = '';
+    enteringCard.style.overflow = '';
+    enteringCard.style.opacity = '';
+    enteringCard.style.transform = '';
+    
+    const fullHeight = enteringCard.offsetHeight;
+    
+    enteringCard.setAttribute('style', origStyle);
+    enteringCard.offsetHeight; // force reflow
+
+    enteringCard.style.transition = 'height 300ms cubic-bezier(0.4, 0, 0.2, 1), margin 300ms cubic-bezier(0.4, 0, 0.2, 1), padding 300ms cubic-bezier(0.4, 0, 0.2, 1), border-width 300ms cubic-bezier(0.4, 0, 0.2, 1)';
+    enteringCard.style.height = `${fullHeight}px`;
+    enteringCard.style.paddingTop = ''; 
+    enteringCard.style.paddingBottom = '';
+    enteringCard.style.marginTop = '';
+    enteringCard.style.marginBottom = ''; 
+    enteringCard.style.borderTopWidth = '';
+    enteringCard.style.borderBottomWidth = '';
+    enteringCard.style.overflow = 'hidden';
+
+    setTimeout(() => {
+      enteringCard.style.transition = 'transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms cubic-bezier(0.16, 1, 0.3, 1)';
+      enteringCard.style.transform = 'translateX(0)';
+      enteringCard.style.opacity = '1';
+
+      setTimeout(() => {
+        enteringCard.classList.remove('card-entering');
+        enteringCard.setAttribute('style', '');
+        AppState.lastRestoredError = null;
+      }, 300);
+    }, 300);
+  }
+  updateButtonStates();
 }
 
 /**
@@ -601,6 +726,7 @@ function renderRewriteResult(original, rewritten, explanation) {
       <div class="correction-suggestion"><ins>${escapeHTML(rewritten)}</ins></div>
       <p class="correction-explanation">${escapeHTML(explanation)}</p>
     </div>`;
+  updateButtonStates();
 }
 
 /**
@@ -621,6 +747,7 @@ function renderHoneResults(improvements) {
       <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:0.88rem;font-style:italic;">
         Your text has been polished.
       </div>`;
+    updateButtonStates();
     return;
   }
 
@@ -633,6 +760,7 @@ function renderHoneResults(improvements) {
         <p class="correction-explanation">${escapeHTML(imp.reason || '')}</p>
       </div>`)
     .join('');
+  updateButtonStates();
 }
 
 /**
@@ -645,6 +773,7 @@ function clearCorrections() {
   if (DOM.correctionsList) {
     DOM.correctionsList.innerHTML = '';
   }
+  updateButtonStates();
 }
 
 /**
@@ -700,6 +829,42 @@ function updateScoreDisplay(score) {
 }
 
 /**
+ * Animate card applying and slide out before invoking applyFix.
+ */
+function animateApplyFix(errorIndex) {
+  const cardEl = DOM.correctionsList.querySelector(`.correction-card[data-error-index="${errorIndex}"]`);
+  if (!cardEl) {
+    applyFix(errorIndex);
+    return;
+  }
+
+  const rect = cardEl.getBoundingClientRect();
+  const originalHeight = rect.height;
+  const gap = window.getComputedStyle(DOM.correctionsList).gap || '16px';
+
+  cardEl.style.height = `${originalHeight}px`;
+  cardEl.offsetHeight; // force reflow
+
+  cardEl.style.transition = 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 300ms cubic-bezier(0.4, 0, 0.2, 1), height 300ms cubic-bezier(0.4, 0, 0.2, 1), margin 300ms cubic-bezier(0.4, 0, 0.2, 1), padding 300ms cubic-bezier(0.4, 0, 0.2, 1), border-width 300ms cubic-bezier(0.4, 0, 0.2, 1)';
+  
+  cardEl.style.transform = 'translateX(120%)';
+  cardEl.style.opacity = '0';
+  cardEl.style.height = '0px';
+  cardEl.style.marginTop = '0px';
+  cardEl.style.marginBottom = `-${gap}`;
+  cardEl.style.paddingTop = '0px';
+  cardEl.style.paddingBottom = '0px';
+  cardEl.style.borderTopWidth = '0px';
+  cardEl.style.borderBottomWidth = '0px';
+  cardEl.style.overflow = 'hidden';
+  cardEl.style.pointerEvents = 'none';
+
+  setTimeout(() => {
+    applyFix(errorIndex);
+  }, 300);
+}
+
+/**
  * Apply a correction fix by replacing the error text in the textarea.
  */
 function applyFix(errorIndex) {
@@ -748,8 +913,8 @@ function applyFix(errorIndex) {
   renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
   updateCounts();
 
-  showToast('Fix applied.', 'success');
   saveActiveSession();
+  autoSaveEntry();
 }
 
 /**
@@ -789,6 +954,7 @@ function undoFix(fixIndex) {
     start: fix.start,
     end: fix.start + fix.original.length
   };
+  AppState.lastRestoredError = restoredError;
   AppState.errors.push(restoredError);
 
   // Sort errors by start offset to restore original position in the sidebar
@@ -802,8 +968,8 @@ function undoFix(fixIndex) {
   renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
   updateCounts();
 
-  showToast('Fix undone.', 'info');
   saveActiveSession();
+  autoSaveEntry();
 }
 
 /* --------------------------------------------------------------------------
@@ -868,21 +1034,18 @@ function setLoading(operation) {
   }
 
   // Disable/enable all action buttons
-  const buttons = [DOM.btnEvaluate, DOM.btnRewrite, DOM.btnHone, DOM.btnSave];
+  updateButtonStates();
+
+  // Add loading class to the active button
+  const buttons = [DOM.btnEvaluate, DOM.btnRewrite, DOM.btnHone];
   buttons.forEach((btn) => {
     if (btn) btn.disabled = AppState.isLoading;
   });
 
-  // Add loading class to the active button
   buttons.forEach((btn) => {
     if (btn) btn.classList.remove('btn--loading');
   });
 
-  if (operation && DOM[`btn${capitalize(operation)}`]) {
-    // Map operation to button: 'evaluate' -> DOM.btnEvaluate, etc.
-  }
-  // Simple approach: add loading class based on operation name
-  if (operation === 'evaluate' && DOM.btnEvaluate) DOM.btnEvaluate.classList.add('btn--loading');
   if (operation === 'rewrite'  && DOM.btnRewrite)  DOM.btnRewrite.classList.add('btn--loading');
   if (operation === 'hone'     && DOM.btnHone)     DOM.btnHone.classList.add('btn--loading');
 }
@@ -1027,11 +1190,107 @@ function restoreActiveSession() {
   }
 }
 
+/**
+ * Show a floating popover directly above the tapped error highlight on mobile.
+ */
+function showMobilePopover(markEl) {
+  removeMobilePopover();
+
+  const errorIndex = parseInt(markEl.getAttribute('data-error-index'), 10);
+  const err = AppState.errors[errorIndex];
+  if (!err) return;
+
+  const typeName  = capitalize(err.type || 'grammar');
+  const typeClass = `error-${err.type || 'grammar'}`;
+
+  // Add has-popover class to allow scrolling past bottom
+  DOM.textarea?.classList.add('has-popover');
+  DOM.highlightLayer?.classList.add('has-popover');
+
+  const popover = document.createElement('div');
+  popover.className = 'mobile-popover';
+  popover.innerHTML = `
+    <button class="popover-close-btn" aria-label="Close">&times;</button>
+    <span class="error-badge ${typeClass}">${typeName}</span>
+    <div class="correction-original"><del>${escapeHTML(err.original || '')}</del></div>
+    <div class="correction-suggestion"><ins>${escapeHTML(err.suggestion || '')}</ins></div>
+    <p class="correction-explanation">${escapeHTML(err.explanation || '')}</p>
+    <button class="btn btn-apply-fix" data-popover-fix-index="${errorIndex}">Apply Fix</button>
+  `;
+
+  // Append popover to highlight layer so it scrolls with the text
+  DOM.highlightLayer?.appendChild(popover);
+
+  // Measure popover dimensions
+  const popoverWidth = popover.offsetWidth || 280;
+  const popoverHeight = popover.offsetHeight || 170;
+
+  // Position it horizontally centered relative to the mark
+  let left = markEl.offsetLeft + (markEl.offsetWidth - popoverWidth) / 2;
+  // Prevent overflow outside the highlight layer boundaries
+  const maxLeft = DOM.highlightLayer.clientWidth - popoverWidth - 16;
+  left = Math.max(16, Math.min(left, maxLeft));
+
+  // Adaptive vertical placement: place below if it overflows the top of the scroll container
+  let top = markEl.offsetTop - popoverHeight - 12;
+  const scrollTop = DOM.highlightLayer.scrollTop || 0;
+
+  if (top < scrollTop) {
+    top = markEl.offsetTop + markEl.offsetHeight + 12;
+    popover.classList.add('popover-below');
+  }
+
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+
+  // Scroll to bring the mark and popover into a clear view
+  if (DOM.textarea) {
+    const containerHeight = DOM.textarea.clientHeight;
+    const targetScrollTop = Math.max(0, markEl.offsetTop - containerHeight / 3);
+    DOM.textarea.scrollTop = targetScrollTop;
+  }
+
+  // Bind close button click
+  popover.querySelector('.popover-close-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeMobilePopover();
+  });
+
+  // Bind apply fix button click
+  popover.querySelector('[data-popover-fix-index]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeMobilePopover();
+    animateApplyFix(errorIndex);
+  });
+}
+
+/**
+ * Remove the mobile floating popover if it exists.
+ */
+function removeMobilePopover() {
+  const popover = DOM.highlightLayer?.querySelector('.mobile-popover');
+  if (popover) {
+    popover.remove();
+  }
+  DOM.textarea?.classList.remove('has-popover');
+  DOM.highlightLayer?.classList.remove('has-popover');
+}
+
 /* --------------------------------------------------------------------------
    15. EVENT LISTENERS
    -------------------------------------------------------------------------- */
 
 function setupEventListeners() {
+  let autoSaveTimeout = null;
+
+  // Dismiss mobile popover when clicking outside
+  document.addEventListener('click', (e) => {
+    const popover = DOM.highlightLayer?.querySelector('.mobile-popover');
+    if (popover && !popover.contains(e.target) && !e.target.closest('mark[data-error-index]')) {
+      removeMobilePopover();
+    }
+  });
+
   // --- Textarea events ---
   DOM.textarea?.addEventListener('input', () => {
     updateCounts();
@@ -1039,10 +1298,23 @@ function setupEventListeners() {
     renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
     syncHighlightScroll();
     saveActiveSession();
+
+    // Autosave on input (debounced by 1000ms)
+    clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = setTimeout(() => {
+      autoSaveEntry();
+    }, 1000);
   });
 
   DOM.textarea?.addEventListener('scroll', () => {
     syncHighlightScroll();
+  });
+
+  DOM.highlightLayer?.addEventListener('scroll', () => {
+    if (DOM.textarea && (DOM.textarea.scrollTop !== DOM.highlightLayer.scrollTop || DOM.textarea.scrollLeft !== DOM.highlightLayer.scrollLeft)) {
+      DOM.textarea.scrollTop = DOM.highlightLayer.scrollTop;
+      DOM.textarea.scrollLeft = DOM.highlightLayer.scrollLeft;
+    }
   });
 
   // Track text selection for the Rewrite feature
@@ -1053,7 +1325,6 @@ function setupEventListeners() {
   DOM.btnEvaluate?.addEventListener('click', evaluate);
   DOM.btnRewrite?.addEventListener('click', rewrite);
   DOM.btnHone?.addEventListener('click', hone);
-  DOM.btnSave?.addEventListener('click', saveEntry);
   DOM.btnNewEntry?.addEventListener('click', newEntry);
 
   // --- Sidebar toggles ---
@@ -1076,6 +1347,9 @@ function setupEventListeners() {
     // Load entry
     const item = e.target.closest('.history-item');
     if (item && item.dataset.id) {
+      if (AppState.currentEntryId === item.dataset.id) {
+        return; // Already active, don't reload to prevent losing active evaluation/correction data
+      }
       loadEntry(item.dataset.id);
     }
   });
@@ -1084,7 +1358,7 @@ function setupEventListeners() {
   DOM.correctionsList?.addEventListener('click', (e) => {
     const fixBtn = e.target.closest('[data-fix-index]');
     if (fixBtn) {
-      applyFix(parseInt(fixBtn.dataset.fixIndex, 10));
+      animateApplyFix(parseInt(fixBtn.dataset.fixIndex, 10));
     }
   });
 
@@ -1115,12 +1389,18 @@ function setupEventListeners() {
     }
   });
 
-  // --- Delegated click: Undo applied fix when indicator is clicked ---
+  // --- Delegated click: Undo applied fix or open mobile popover on tap ---
   DOM.highlightLayer?.addEventListener('click', (e) => {
-    const mark = e.target.closest('.mark-applied-fix');
-    if (mark) {
-      const index = parseInt(mark.getAttribute('data-fix-index'), 10);
+    const markApplied = e.target.closest('.mark-applied-fix');
+    if (markApplied) {
+      const index = parseInt(markApplied.getAttribute('data-fix-index'), 10);
       undoFix(index);
+      return;
+    }
+
+    const errorMark = e.target.closest('mark[data-error-index]');
+    if (errorMark && window.innerWidth <= 1024) {
+      showMobilePopover(errorMark);
     }
   });
 
@@ -1131,7 +1411,8 @@ function setupEventListeners() {
     // Ctrl+S / Cmd+S — Save
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
-      saveEntry();
+      autoSaveEntry();
+      showToast('Autosaved.', 'success');
     }
 
     // Ctrl+E / Cmd+E — Evaluate
@@ -1198,6 +1479,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initial highlight sync
   syncHighlightScroll();
+
+  updateButtonStates();
 
   console.log(
     '%c🤠 Red Dead Editor loaded. Write well, partner.',

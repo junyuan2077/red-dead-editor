@@ -77,6 +77,10 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
 
+  /* === Editor Lines Alignment === */
+  --editor-line-height: 38px;
+  --editor-line-offset: 18px;
+
   /* === Transitions === */
   --transition-fast:   0.15s ease;
   --transition-base:   0.25s ease;
@@ -523,12 +527,13 @@ body::after {
     repeating-linear-gradient(
       to bottom,
       transparent,
-      transparent 31px,
-      rgba(199, 164, 74, 0.08) 31px,
-      rgba(199, 164, 74, 0.08) 32px
+      transparent calc(var(--editor-line-height) - 1px),
+      rgba(199, 164, 74, 0.08) calc(var(--editor-line-height) - 1px),
+      rgba(199, 164, 74, 0.08) var(--editor-line-height)
     ),
     /* Subtle grain noise (CSS only) */
     url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  background-position: 0 var(--editor-line-offset), 0 0;
 }
 
 /* Aged edge effect on the writing surface */
@@ -553,7 +558,7 @@ body::after {
   height: 100%;
   font-family: 'RedDead', 'Georgia', serif;
   font-size: 1.3em; /* Increased textarea and highlight-layer font size to 1.3em */
-  line-height: 1.8;
+  line-height: var(--editor-line-height);
   padding: var(--space-lg);
   padding-top: 28px; /* align with ruled lines */
   word-wrap: break-word;
@@ -616,6 +621,7 @@ body::after {
   padding: 0;
   position: relative;
   transition: background-color var(--transition-fast);
+  pointer-events: auto; /* Allow clicks/taps on mobile viewports */
 }
 
 .highlight-layer mark.mark-hover {
@@ -689,16 +695,43 @@ body::after {
 }
 
 /* --------------------------------------------------------------------------
-   10. ACTION BUTTONS
+   10. ACTION BUTTONS — Weathered toolbar at the foot of the journal
    -------------------------------------------------------------------------- */
 
 .journal-footer {
   display: flex;
-  gap: var(--space-sm);
   flex-shrink: 0;
-  flex-wrap: wrap;
+  background: rgba(var(--bg-deep-rgb), 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(199, 164, 74, 0.1);
+  box-shadow:
+    var(--shadow-md),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  padding: 4px;
+  gap: 4px;
+  position: relative;
 }
 
+/* Faint ruled separator between buttons */
+.journal-footer .btn + .btn::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 20%;
+  bottom: 20%;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(199, 164, 74, 0.22),
+    transparent
+  );
+  pointer-events: none;
+}
+
+/* --- Base button --- */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -706,97 +739,122 @@ body::after {
   gap: var(--space-sm);
   padding: var(--space-md) var(--space-lg);
   font-family: 'RedDeadText', 'Lora', serif;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   border-radius: var(--radius-md);
   border: 1px solid transparent;
-  transition:
-    transform var(--transition-fast),
-    box-shadow var(--transition-fast),
-    filter var(--transition-fast),
-    opacity var(--transition-fast),
-    background var(--transition-fast);
+  background: transparent;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
   position: relative;
   overflow: hidden;
   white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.btn:hover:not(:disabled) {
+  color: var(--text-light);
+  background: rgba(199, 164, 74, 0.08);
+  border-color: rgba(199, 164, 74, 0.15);
 }
 
 .btn:active:not(:disabled) {
-  transform: scale(0.96);
+  transform: scale(0.97);
 }
 
 .btn:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   pointer-events: none;
   cursor: not-allowed;
 }
 
+/* --- Button icon --- */
 .btn-icon {
-  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0; /* collapse emoji font-size fallback */
   line-height: 1;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast);
 }
 
-/* Evaluate — textured red */
+.btn:hover .btn-icon {
+  opacity: 1;
+}
+
+.btn-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
+}
+
+/* --- Evaluate — crimson accent --- */
 .btn-evaluate {
-  background: var(--red-deep) url('assets/texturedRed.png') center / cover no-repeat;
-  color: #fff;
-  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.08);
-  flex: 1;
-  min-width: 120px;
+  color: var(--red-glow);
 }
 
 .btn-evaluate:hover:not(:disabled) {
-  filter: brightness(1.2);
-  box-shadow: var(--shadow-md), 0 0 20px rgba(198, 40, 40, 0.3);
+  color: #fff;
+  background: var(--red-deep);
+  border-color: var(--red-bright);
+  box-shadow: 0 0 18px rgba(229, 57, 53, 0.2);
 }
 
-/* Rewrite — textured gold */
+.btn-evaluate .btn-icon svg { stroke: currentColor; }
+
+/* --- Rewrite — gold accent --- */
 .btn-rewrite {
-  background: var(--gold) url('assets/texturedYellow.png') center / cover no-repeat;
-  color: var(--ink);
-  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.12);
-  flex: 1;
-  min-width: 120px;
+  color: var(--gold);
 }
 
 .btn-rewrite:hover:not(:disabled) {
-  filter: brightness(1.15);
-  box-shadow: var(--shadow-md), 0 0 20px rgba(199, 164, 74, 0.3);
+  color: var(--ink);
+  background: var(--gold);
+  border-color: var(--gold-light);
+  box-shadow: 0 0 18px rgba(199, 164, 74, 0.25);
 }
 
-/* Hone — dark with gold border */
+.btn-rewrite .btn-icon svg { stroke: currentColor; }
+
+/* --- Hone — muted gold outline accent --- */
 .btn-hone {
-  background: rgba(var(--bg-deep-rgb), 0.8);
-  color: var(--gold);
-  border-color: var(--gold-dim);
-  box-shadow: var(--shadow-sm);
-  flex: 1;
-  min-width: 100px;
+  color: var(--gold-dim);
 }
 
 .btn-hone:hover:not(:disabled) {
-  background: var(--gold);
-  color: var(--ink);
-  box-shadow: var(--shadow-md), var(--shadow-glow);
+  color: var(--gold-light);
+  background: rgba(199, 164, 74, 0.1);
+  border-color: var(--gold-dim);
+  box-shadow: 0 0 14px rgba(199, 164, 74, 0.12);
 }
 
-/* Save — parchment */
+.btn-hone .btn-icon svg { stroke: currentColor; }
+
+/* --- Save — parchment accent --- */
 .btn-save {
-  background: var(--parchment);
-  color: var(--ink);
-  box-shadow: var(--shadow-sm);
-  flex: 1;
-  min-width: 100px;
+  color: var(--parchment-dark);
 }
 
 .btn-save:hover:not(:disabled) {
-  background: var(--parchment-dark);
-  box-shadow: var(--shadow-md);
+  color: var(--ink);
+  background: var(--parchment);
+  border-color: var(--parchment-dark);
+  box-shadow: 0 0 14px rgba(212, 196, 160, 0.15);
 }
 
-/* Loading state for buttons */
+.btn-save .btn-icon svg { stroke: currentColor; }
+
+/* --- Loading state --- */
 .btn--loading {
   pointer-events: none;
 }
@@ -908,7 +966,6 @@ body::after {
   gap: var(--space-md);
 }
 
-/* --- Correction Card --- */
 .correction-card {
   background: rgba(var(--bg-deep-rgb), 0.6);
   border: 1px solid rgba(199, 164, 74, 0.1);
@@ -920,7 +977,10 @@ body::after {
   transition:
     border-color var(--transition-fast),
     box-shadow var(--transition-fast);
-  animation: fadeIn 0.3s ease;
+}
+
+.corrections-list.stagger-in .correction-card {
+  animation: slideUpFade 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .correction-card:hover {
@@ -969,10 +1029,13 @@ body::after {
 }
 
 .correction-explanation {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  line-height: 1.5;
-  font-style: italic;
+  font-size: 0.88rem;
+  color: var(--parchment-light);
+  line-height: 1.6;
+  font-style: normal;
+  border-left: 2px solid rgba(199, 164, 74, 0.35);
+  padding-left: 10px;
+  margin: 4px 0;
 }
 
 .btn-apply-fix {
@@ -1120,6 +1183,17 @@ body::after {
   to   { opacity: 1; }
 }
 
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes fadeOut {
   from { opacity: 1; }
   to   { opacity: 0; }
@@ -1251,24 +1325,28 @@ body::after {
     padding: 0 var(--space-md);
   }
 
+  :root {
+    --editor-line-height: 29px;
+    --editor-line-offset: 13px;
+  }
+
   /* Slightly smaller editor text */
   .highlight-layer,
   .editor-textarea {
     font-size: 16px;
     padding: var(--space-md);
     padding-top: 22px;
-    line-height: 1.7;
   }
 
-  /* Stack action buttons */
+  /* Prevent stacking, keep horizontal row */
   .journal-footer {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .journal-footer .btn {
-    flex: 1 1 45%;
+    flex: 1;
     min-width: 0;
-    padding: var(--space-md);
+    padding: var(--space-md) var(--space-sm);
     font-size: 0.75rem;
     min-height: 44px;    /* Touch target */
   }
@@ -1328,32 +1406,27 @@ body::after {
     display: none;   /* Hide subtitle on very small screens */
   }
 
-  /* Full-width stacked buttons */
-  .journal-footer {
-    flex-direction: column;
-  }
-
-  .journal-footer .btn {
-    flex: none;
-    width: 100%;
-  }
-
-  /* Hide button labels, show only icons on tiny screens */
+  /* Hide button labels, show only icons on tiny screens to keep horizontal layout */
   .btn-label {
     display: none;
   }
 
   .btn-icon {
-    font-size: 1.2rem;
+    font-size: 0;
   }
 
-  .journal-footer .btn {
-    padding: var(--space-md);
-    justify-content: center;
+  .btn-icon svg {
+    width: 18px;
+    height: 18px;
   }
 
   .sidebar {
     width: 100%;  /* Full screen drawer */
+  }
+
+  :root {
+    --editor-line-height: 27px;
+    --editor-line-offset: 9px;
   }
 
   /* Even smaller editor text */
@@ -1374,7 +1447,82 @@ body::after {
 }
 
 /* --------------------------------------------------------------------------
-   20. PRINT STYLES
+   20. MOBILE POPOVER — Floating error card above text marks on tap
+   -------------------------------------------------------------------------- */
+
+.highlight-layer.has-popover,
+.editor-textarea.has-popover {
+  padding-bottom: 260px !important;
+}
+
+.mobile-popover {
+  position: absolute;
+  z-index: 100;
+  width: 290px;
+  background: rgba(30, 22, 20, 0.98);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  box-shadow: 
+    0 10px 30px rgba(0, 0, 0, 0.7),
+    var(--shadow-glow);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  animation: popoverIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  pointer-events: auto; /* enable interactions inside popover */
+}
+
+@keyframes popoverIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.mobile-popover::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px 6px 0;
+  border-style: solid;
+  border-color: var(--gold) transparent;
+  display: block;
+  width: 0;
+}
+
+.mobile-popover.popover-below::after {
+  bottom: auto;
+  top: -6px;
+  border-width: 0 6px 6px;
+}
+
+.popover-close-btn {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  transition: color var(--transition-fast);
+}
+
+.popover-close-btn:hover {
+  color: var(--red-glow);
+}
+
+/* --------------------------------------------------------------------------
+   21. PRINT STYLES
    -------------------------------------------------------------------------- */
 
 @media print {

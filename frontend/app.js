@@ -43,6 +43,8 @@ const AppState = {
   overallScore:          null,
   summary:               '',
   lastRestoredError:     null,
+  inRewriteMode:         false,
+  rewriteSentences:      [],
 };
 
 /* --------------------------------------------------------------------------
@@ -57,6 +59,9 @@ function initDOMReferences() {
   DOM.textarea       = document.getElementById('editor-textarea');
   DOM.highlightLayer = document.getElementById('highlight-layer');
   DOM.loadingOverlay = document.getElementById('loading-overlay');
+  DOM.journalContainer = document.querySelector('.journal-container');
+  DOM.rewriteBanner    = document.getElementById('rewrite-banner');
+  DOM.btnExitRewrite   = document.getElementById('btn-exit-rewrite');
 
   // Counts
   DOM.wordCount      = document.getElementById('word-count');
@@ -116,6 +121,11 @@ function syncHighlightScroll() {
 function renderHighlights(text, errors, appliedFixes = []) {
   if (!DOM.highlightLayer) return;
   removeMobilePopover();
+
+  if (AppState.inRewriteMode) {
+    renderInterleavedRewrite(text, errors, appliedFixes);
+    return;
+  }
 
   const combined = [];
   if (errors) {
@@ -194,6 +204,131 @@ function escapeHTML(str) {
     .replace(/'/g, '&#039;');
 }
 
+/**
+ * Render a specific substring of text with error highlights.
+ */
+function renderSubstringWithHighlights(text, startOffset, endOffset, errors, appliedFixes) {
+  const subtext = text.substring(startOffset, endOffset);
+  
+  const combined = [];
+  if (errors) {
+    errors.forEach((err, idx) => {
+      if (err.start >= startOffset && err.end <= endOffset) {
+        combined.push({
+          start: err.start - startOffset,
+          end: err.end - startOffset,
+          type: 'error',
+          errorType: err.type || 'grammar',
+          index: idx
+        });
+      }
+    });
+  }
+  if (appliedFixes) {
+    appliedFixes.forEach((fix, idx) => {
+      if (fix.start >= startOffset && fix.end <= endOffset) {
+        combined.push({
+          start: fix.start - startOffset,
+          end: fix.end - startOffset,
+          type: 'fix',
+          index: idx
+        });
+      }
+    });
+  }
+
+  if (combined.length === 0) {
+    return escapeHTML(subtext);
+  }
+
+  combined.sort((a, b) => a.start - b.start || b.end - a.end);
+
+  let html = '';
+  let cursor = 0;
+
+  for (let i = 0; i < combined.length; i++) {
+    const item = combined[i];
+    if (item.start < cursor) continue;
+
+    if (item.start > cursor) {
+      html += escapeHTML(subtext.slice(cursor, item.start));
+    }
+
+    const itemText = subtext.slice(item.start, item.end);
+    if (item.type === 'error') {
+      const typeClass = `mark-${(item.errorType || 'grammar').toLowerCase()}`;
+      html += `<mark class="${typeClass}" data-error-index="${item.index}">${escapeHTML(itemText)}</mark>`;
+    } else if (item.type === 'fix') {
+      html += `<mark class="mark-applied-fix" data-fix-index="${item.index}" title="Click to undo correction">${escapeHTML(itemText)}</mark>`;
+    }
+
+    cursor = item.end;
+  }
+
+  if (cursor < subtext.length) {
+    html += escapeHTML(subtext.slice(cursor));
+  }
+
+  return html;
+}
+
+/**
+ * Render the full-text interleaved original and rewritten sentences.
+ */
+function renderInterleavedRewrite(text, errors, appliedFixes) {
+  let cursor = 0;
+  let html = '';
+  
+  for (let i = 0; i < AppState.rewriteSentences.length; i++) {
+    const item = AppState.rewriteSentences[i];
+    let originalText = item.original;
+    let itemStart = text.indexOf(originalText, cursor);
+    let matchedLength = originalText.length;
+    
+    if (itemStart === -1) {
+      const prefix = originalText.trim().substring(0, 30);
+      const tempIndex = text.indexOf(prefix, cursor);
+      if (tempIndex !== -1) {
+        itemStart = tempIndex;
+        matchedLength = Math.min(originalText.length, text.length - itemStart);
+      }
+    }
+    
+    if (itemStart === -1) {
+      continue;
+    }
+    
+    if (itemStart > cursor) {
+      const sepText = text.substring(cursor, itemStart);
+      if (sepText.trim() || sepText.includes('\n')) {
+        html += `<div class="interleaved-separator">${escapeHTML(sepText).replace(/\n/g, '<br>')}</div>`;
+      }
+    }
+    
+    item.start = itemStart;
+    item.end = itemStart + matchedLength;
+    
+    const originalHtml = renderSubstringWithHighlights(text, item.start, item.end, errors, appliedFixes);
+    
+    html += `
+      <div class="interleaved-block" data-index="${i}">
+        <div class="interleaved-original">${originalHtml}</div>
+        <div class="interleaved-rewritten" tabindex="0">${escapeHTML(item.rewritten)}</div>
+      </div>`;
+      
+    cursor = item.end;
+  }
+  
+  if (cursor < text.length) {
+    const sepText = text.substring(cursor);
+    if (sepText.trim() || sepText.includes('\n')) {
+      html += `<div class="interleaved-separator">${escapeHTML(sepText).replace(/\n/g, '<br>')}</div>`;
+    }
+  }
+
+  DOM.highlightLayer.innerHTML = html + '\n';
+}
+
 /* --------------------------------------------------------------------------
    5. API FUNCTIONS
    All return Promises; errors are thrown and caught by callers.
@@ -251,6 +386,9 @@ async function apiHone(text) {
  * EVALUATE — Analyze the current text for grammar, style, and spelling errors.
  */
 async function evaluate() {
+  if (AppState.inRewriteMode) {
+    exitRewriteMode();
+  }
   const text = DOM.textarea.value.trim();
   if (!text) {
     showToast('Write something first, partner.', 'error');
@@ -295,46 +433,25 @@ async function evaluate() {
   }
 }
 
-/**
- * REWRITE — Rewrite the selected sentence using AI, then play TTS.
- */
 async function rewrite() {
-  // Get selection from textarea
-  const start = DOM.textarea.selectionStart;
-  const end   = DOM.textarea.selectionEnd;
-  const selectedText = DOM.textarea.value.substring(start, end).trim();
+  const text = DOM.textarea.value.trim();
 
-  if (!selectedText) {
-    showToast('Select a sentence to rewrite, partner.', 'error');
+  if (!text) {
+    showToast('Write some text first, partner.', 'error');
     return;
   }
 
-  const context = DOM.textarea.value;
   setLoading('rewrite');
 
   try {
-    const data = await apiRewrite(selectedText, context);
-    const rewritten = data.rewritten || selectedText;
-
-    // Replace selected text in the textarea
-    const before = DOM.textarea.value.substring(0, start);
-    const after  = DOM.textarea.value.substring(end);
-    DOM.textarea.value = before + rewritten + after;
-
-    // Clear stale evaluation errors (text has changed)
-    AppState.errors = [];
-    AppState.appliedFixes = [];
-    renderHighlights(DOM.textarea.value, [], []);
-    updateCounts();
-
-    // Show the rewrite result in the corrections sidebar
-    renderRewriteResult(selectedText, rewritten, data.explanation || '');
-
-
-
-    showToast('Sentence rewritten successfully.', 'success');
-    saveActiveSession();
-    autoSaveEntry();
+    const data = await apiRewrite(text, "");
+    
+    if (data.sentences && data.sentences.length > 0) {
+      enterRewriteMode(data.sentences);
+      showToast('Article rewritten successfully.', 'success');
+    } else {
+      showToast('No sentences rewritten.', 'info');
+    }
   } catch (err) {
     console.error('Rewrite error:', err);
     showToast('Rewrite failed. Try again.', 'error');
@@ -344,9 +461,71 @@ async function rewrite() {
 }
 
 /**
+ * Enter the interleaved rewrite comparison view mode.
+ */
+function enterRewriteMode(sentences) {
+  AppState.inRewriteMode = true;
+  AppState.rewriteSentences = sentences;
+
+  // Show the rewrite banner
+  if (DOM.rewriteBanner) {
+    DOM.rewriteBanner.style.display = 'flex';
+  }
+
+  // Toggle class on container
+  DOM.journalContainer?.classList.add('view-rewrite');
+
+  // Re-render highlights (which will trigger interleaved view)
+  renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+
+  // Clear corrections sidebar and show placeholder instructions
+  if (DOM.summaryText) {
+    DOM.summaryText.innerHTML = `<p><strong>Full-Text Rewrite Comparison</strong></p>`;
+  }
+  if (DOM.correctionsList) {
+    DOM.correctionsList.innerHTML = `
+      <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:0.88rem;font-style:italic;">
+        Interact with a rewritten sentence to view its explanation here.
+      </div>`;
+  }
+
+  // Update button states
+  updateButtonStates();
+}
+
+/**
+ * Exit the rewrite view mode and return to standard editor.
+ */
+function exitRewriteMode() {
+  AppState.inRewriteMode = false;
+  AppState.rewriteSentences = [];
+
+  // Hide the rewrite banner
+  if (DOM.rewriteBanner) {
+    DOM.rewriteBanner.style.display = 'none';
+  }
+
+  // Toggle class on container
+  DOM.journalContainer?.classList.remove('view-rewrite');
+
+  // Re-render standard highlights and corrections
+  renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+  renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+
+  // Focus textarea
+  DOM.textarea?.focus();
+
+  // Update button states
+  updateButtonStates();
+}
+
+/**
  * HONE — Polish the entire text.
  */
 async function hone() {
+  if (AppState.inRewriteMode) {
+    exitRewriteMode();
+  }
   const text = DOM.textarea.value.trim();
   if (!text) {
     showToast('Write something first, partner.', 'error');
@@ -453,6 +632,9 @@ function saveEntry() {
  * Load a saved entry into the editor.
  */
 function loadEntry(id) {
+  if (AppState.inRewriteMode) {
+    exitRewriteMode();
+  }
   const entries = getEntries();
   const entry   = entries.find((e) => e.id === id);
   if (!entry) return;
@@ -494,6 +676,9 @@ function deleteEntry(id) {
  * Start a fresh new entry.
  */
 function newEntry() {
+  if (AppState.inRewriteMode) {
+    exitRewriteMode();
+  }
   DOM.textarea.value      = '';
   AppState.currentEntryId = null;
   AppState.errors         = [];
@@ -1016,6 +1201,18 @@ function undoFix(fixIndex) {
     }
   });
 
+  // Adjust positions of rewrite sentences if in rewrite mode
+  if (AppState.inRewriteMode && AppState.rewriteSentences) {
+    AppState.rewriteSentences.forEach((s) => {
+      if (s.start > fix.start) {
+        s.start += lengthDiff;
+        s.end   += lengthDiff;
+      } else if (s.end > fix.start) {
+        s.end   += lengthDiff;
+      }
+    });
+  }
+
   // Restore the error object
   const restoredError = {
     ...fix.originalError,
@@ -1361,6 +1558,9 @@ function setupEventListeners() {
 
   // --- Textarea events ---
   DOM.textarea?.addEventListener('input', () => {
+    if (AppState.inRewriteMode) {
+      exitRewriteMode();
+    }
     updateCounts();
     // Re-render highlights with current errors and applied fixes (keeps marks in sync with edits)
     renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
@@ -1385,7 +1585,7 @@ function setupEventListeners() {
     }
   });
 
-  // Track text selection for the Rewrite feature
+  // Track text selection for the Rewrite feature (not strictly needed for full-rewrite but kept for compatibility)
   DOM.textarea?.addEventListener('mouseup', trackSelection);
   DOM.textarea?.addEventListener('keyup', trackSelection);
 
@@ -1394,6 +1594,7 @@ function setupEventListeners() {
   DOM.btnRewrite?.addEventListener('click', rewrite);
   DOM.btnHone?.addEventListener('click', hone);
   DOM.btnNewEntry?.addEventListener('click', newEntry);
+  DOM.btnExitRewrite?.addEventListener('click', exitRewriteMode);
 
   // --- Sidebar toggles ---
   DOM.historyToggle?.addEventListener('click', toggleHistorySidebar);
@@ -1475,8 +1676,31 @@ function setupEventListeners() {
     }
   });
 
-  // --- Delegated click: Undo applied fix or open mobile popover on tap ---
+  // --- Delegated click: Undo applied fix, open mobile popover on tap, or select rewritten sentence ---
   DOM.highlightLayer?.addEventListener('click', (e) => {
+    // Clicked a rewritten sentence in rewrite mode
+    const rewrittenEl = e.target.closest('.interleaved-rewritten');
+    if (rewrittenEl) {
+      e.stopPropagation();
+      const blockEl = rewrittenEl.closest('.interleaved-block');
+      if (blockEl) {
+        const idx = parseInt(blockEl.getAttribute('data-index'), 10);
+        const sentence = AppState.rewriteSentences[idx];
+        if (sentence) {
+          DOM.highlightLayer.querySelectorAll('.interleaved-block').forEach((b) => {
+            b.classList.remove('active-block');
+          });
+          blockEl.classList.add('active-block');
+          
+          renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
+          
+          // Auto-open corrections sidebar
+          openCorrectionsSidebar();
+        }
+      }
+      return;
+    }
+
     const markApplied = e.target.closest('.mark-applied-fix');
     if (markApplied) {
       const index = parseInt(markApplied.getAttribute('data-fix-index'), 10);
@@ -1487,6 +1711,25 @@ function setupEventListeners() {
     const errorMark = e.target.closest('mark[data-error-index]');
     if (errorMark && window.innerWidth <= 1024) {
       showMobilePopover(errorMark);
+    }
+  });
+
+  // --- Delegated focusin: History / rewritten sentence keyboard focus ---
+  DOM.highlightLayer?.addEventListener('focusin', (e) => {
+    const rewrittenEl = e.target.closest('.interleaved-rewritten');
+    if (rewrittenEl) {
+      const blockEl = rewrittenEl.closest('.interleaved-block');
+      if (blockEl) {
+        const idx = parseInt(blockEl.getAttribute('data-index'), 10);
+        const sentence = AppState.rewriteSentences[idx];
+        if (sentence) {
+          DOM.highlightLayer.querySelectorAll('.interleaved-block').forEach((b) => {
+            b.classList.remove('active-block');
+          });
+          blockEl.classList.add('active-block');
+          renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
+        }
+      }
     }
   });
 

@@ -118,6 +118,12 @@
 
       <!-- The dual-layer editor container -->
       <div class="journal-container">
+        <!-- Rewrite banner — shown in rewrite mode -->
+        <div class="rewrite-banner" id="rewrite-banner" style="display: none;">
+          <span class="rewrite-banner-text">Showing full-text rewrite comparison</span>
+          <button class="btn btn-exit-rewrite" id="btn-exit-rewrite">Back to Editor</button>
+        </div>
+
         <!-- Highlight layer: sits behind the textarea, shows colored marks -->
         <div class="highlight-layer" id="highlight-layer" aria-hidden="true"></div>
 

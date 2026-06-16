@@ -148,7 +148,7 @@ def evaluate_text_endpoint(req: EvaluateRequest) -> dict:
 
 @app.post("/api/rewrite")
 def rewrite_sentence(req: RewriteRequest) -> dict:
-    """Rewrite a single sentence for clarity and style."""
+    """Rewrite the text (could be single sentence or full article) for clarity and style."""
     if not req.sentence.strip():
         raise HTTPException(status_code=400, detail="Sentence must not be empty.")
     
@@ -158,12 +158,23 @@ def rewrite_sentence(req: RewriteRequest) -> dict:
         raise HTTPException(status_code=500, detail=raw_results["error"])
         
     rewritten = req.sentence
-    if isinstance(raw_results, list) and len(raw_results) > 0:
-        rewritten = " ".join([item.get("rewritten", "") for item in raw_results])
+    sentences = []
+    if isinstance(raw_results, list):
+        sentences = [
+            {
+                "original": item.get("original", ""),
+                "rewritten": item.get("rewritten", ""),
+                "explanation": item.get("explanation", "Improved sentence structure and clarity.")
+            }
+            for item in raw_results
+        ]
+        if len(raw_results) > 0:
+            rewritten = " ".join([item.get("rewritten", "") for item in raw_results])
         
     return {
         "rewritten": rewritten.strip(),
-        "explanation": "Rewritten for clarity and flow."
+        "explanation": "Rewritten for clarity and flow.",
+        "sentences": sentences
     }
 
 

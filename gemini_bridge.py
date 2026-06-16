@@ -36,6 +36,7 @@ Return ONLY a valid JSON array of objects. Do not include any markdown formattin
 Each object in the array should represent a logical sentence or phrase and must have the following fields:
 - "original": The original sentence or phrase from the source text.
 - "rewritten": The rewritten, improved version of the sentence or phrase.
+- "explanation": A clear, concise explanation of why this rewrite is an improvement over the original sentence.
 
 The sequence of objects must cover the entire source text from start to finish.
 """

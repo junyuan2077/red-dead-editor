@@ -371,8 +371,10 @@ function activateRewriteBlock(idx, focusRewritten = false) {
 
   renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
   
-  // Auto-open corrections sidebar
-  openCorrectionsSidebar();
+  // Auto-open corrections sidebar on mobile
+  if (window.innerWidth <= 1024) {
+    openCorrectionsSidebar();
+  }
 }
 
 /* --------------------------------------------------------------------------

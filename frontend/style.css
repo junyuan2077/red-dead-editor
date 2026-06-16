@@ -1002,6 +1002,7 @@ body::after {
    -------------------------------------------------------------------------- */
 
 .sidebar-backdrop {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 49;
@@ -1197,6 +1198,10 @@ body::after {
    -------------------------------------------------------------------------- */
 
 @media (max-width: 1024px) {
+  .sidebar-backdrop {
+    display: block;
+  }
+
   .history-item-delete {
     opacity: 1 !important;
   }

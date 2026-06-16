@@ -10,7 +10,7 @@ load_dotenv()
 
 EVALUATE_SYSTEM_PROMPT = """
 You are an expert English writing assistant. 
-Analyze the provided text for grammatical errors, spelling mistakes, and stylistic flaws.
+Analyze the provided text for grammatical errors, spelling mistakes, tense inconsistencies, and stylistic flaws.
 Return ONLY a valid JSON array of objects. Do not include any markdown formatting, preamble, or postamble.
 
 CRITICAL RULES FOR TEXT FRAGMENTS:

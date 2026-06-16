@@ -397,14 +397,6 @@ body::after {
   flex: 1;
 }
 
-.history-item-actions {
-  display: flex;
-  gap: 2px;
-  flex-shrink: 0;
-  align-items: center;
-}
-
-.history-item-edit,
 .history-item-delete {
   opacity: 0;
   width: 24px;
@@ -423,14 +415,8 @@ body::after {
   padding: 0;
 }
 
-.history-item:hover .history-item-edit,
 .history-item:hover .history-item-delete {
   opacity: 1;
-}
-
-.history-item-edit:hover {
-  color: var(--gold);
-  background: rgba(199, 164, 74, 0.15);
 }
 
 .history-item-delete:hover {
@@ -1276,7 +1262,6 @@ body::after {
    -------------------------------------------------------------------------- */
 
 @media (max-width: 1024px) {
-  .history-item-edit,
   .history-item-delete {
     opacity: 1 !important;
   }

@@ -62,7 +62,6 @@ function initDOMReferences() {
   DOM.loadingOverlay = document.getElementById('loading-overlay');
   DOM.journalContainer = document.querySelector('.journal-container');
   DOM.rewriteBanner    = document.getElementById('rewrite-banner');
-  DOM.btnExitRewrite   = document.getElementById('btn-exit-rewrite');
 
   // Counts
   DOM.wordCount      = document.getElementById('word-count');
@@ -479,6 +478,12 @@ async function evaluate() {
 }
 
 async function rewrite() {
+  // Toggle: if already in rewrite mode, exit back to editor
+  if (AppState.inRewriteMode) {
+    exitRewriteMode();
+    return;
+  }
+
   const text = DOM.textarea.value.trim();
 
   if (!text) {
@@ -862,7 +867,8 @@ function updateButtonStates() {
     DOM.btnEvaluate.disabled = isLoading;
   }
   if (DOM.btnRewrite) {
-    DOM.btnRewrite.disabled = isLoading || hasErrors;
+    // Keep enabled in rewrite mode so it can toggle back to editor
+    DOM.btnRewrite.disabled = AppState.inRewriteMode ? false : (isLoading || hasErrors);
   }
   if (DOM.btnHone) {
     DOM.btnHone.disabled = isLoading || hasErrors;
@@ -1600,7 +1606,6 @@ function setupEventListeners() {
   DOM.btnRewrite?.addEventListener('click', rewrite);
   DOM.btnHone?.addEventListener('click', hone);
   DOM.btnNewEntry?.addEventListener('click', newEntry);
-  DOM.btnExitRewrite?.addEventListener('click', exitRewriteMode);
 
   // --- Sidebar toggles ---
   DOM.historyToggle?.addEventListener('click', toggleHistorySidebar);

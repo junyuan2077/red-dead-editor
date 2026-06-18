@@ -1034,6 +1034,31 @@ function renderRewriteResult(original, rewritten, explanation) {
 }
 
 /**
+ * Show a single correction card in the corrections sidebar when reviewing an error in rewrite mode.
+ */
+function renderSingleCorrectionCard(err, index) {
+  if (!DOM.correctionsList) return;
+
+  if (DOM.summaryText) {
+    DOM.summaryText.innerHTML = `<p><strong>Reviewing Correction</strong></p>`;
+  }
+
+  const typeName  = capitalize(err.type || 'grammar');
+  const typeClass = `error-${err.type || 'grammar'}`;
+
+  DOM.correctionsList.innerHTML = `
+    <div class="correction-card" data-error-index="${index}">
+      <span class="error-badge ${typeClass}">${typeName}</span>
+      <div class="correction-original"><del>${escapeHTML(err.original || '')}</del></div>
+      <div class="correction-suggestion"><ins>${escapeHTML(err.suggestion || '')}</ins></div>
+      <p class="correction-explanation">${escapeHTML(err.explanation || '')}</p>
+      <button class="btn btn-apply-fix" data-fix-index="${index}">Apply Fix</button>
+    </div>`;
+
+  updateButtonStates();
+}
+
+/**
  * Show hone improvements in the corrections sidebar.
  */
 function renderHoneResults(improvements) {
@@ -1174,9 +1199,36 @@ function applyFix(errorIndex) {
     }
   });
 
+  // Adjust positions of rewrite sentences if in rewrite mode
+  if (AppState.inRewriteMode && AppState.rewriteSentences) {
+    AppState.rewriteSentences.forEach((s) => {
+      if (s.start > err.start) {
+        s.start += lengthDiff;
+        s.end   += lengthDiff;
+      } else if (s.end > err.start) {
+        s.end   += lengthDiff;
+      }
+    });
+  }
+
   // Re-render
   renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
-  renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+  
+  if (AppState.inRewriteMode) {
+    if (AppState.activeRewriteIndex !== null && AppState.activeRewriteIndex !== undefined) {
+      const sentence = AppState.rewriteSentences[AppState.activeRewriteIndex];
+      if (sentence) {
+        renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
+      } else {
+        clearCorrections();
+      }
+    } else {
+      clearCorrections();
+    }
+  } else {
+    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+  }
+  
   updateCounts();
 
   saveActiveSession();
@@ -1243,7 +1295,16 @@ function undoFix(fixIndex) {
 
   // Re-render
   renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
-  renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+  
+  if (AppState.inRewriteMode) {
+    const errIndex = AppState.errors.findIndex(
+      e => e.start === restoredError.start && e.original === restoredError.original
+    );
+    renderSingleCorrectionCard(restoredError, errIndex);
+  } else {
+    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+  }
+  
   updateCounts();
 
   saveActiveSession();
@@ -1691,8 +1752,8 @@ function setupEventListeners() {
   DOM.highlightLayer?.addEventListener('mousedown', (e) => {
     if (!AppState.inRewriteMode) return;
     
-    // If they clicked an applied fix mark, let the click handler undo it (don't prevent default)
-    if (e.target.closest('.mark-applied-fix')) {
+    // If they clicked a mark (applied fix or error), let the click handler run (don't prevent default)
+    if (e.target.closest('.mark-applied-fix') || e.target.closest('mark[data-error-index]')) {
       const blockEl = e.target.closest('.interleaved-block');
       if (blockEl) {
         const idx = parseInt(blockEl.getAttribute('data-index'), 10);
@@ -1719,8 +1780,42 @@ function setupEventListeners() {
   DOM.highlightLayer?.addEventListener('click', (e) => {
     const markApplied = e.target.closest('.mark-applied-fix');
     if (markApplied) {
+      e.stopPropagation();
       const index = parseInt(markApplied.getAttribute('data-fix-index'), 10);
+      if (AppState.inRewriteMode) {
+        const blockEl = markApplied.closest('.interleaved-block');
+        if (blockEl) {
+          AppState.activeRewriteIndex = parseInt(blockEl.getAttribute('data-index'), 10);
+        }
+      }
       undoFix(index);
+      return;
+    }
+
+    const errorMark = e.target.closest('mark[data-error-index]');
+    if (errorMark) {
+      e.stopPropagation();
+      const errorIndex = parseInt(errorMark.getAttribute('data-error-index'), 10);
+      if (AppState.inRewriteMode) {
+        const blockEl = errorMark.closest('.interleaved-block');
+        if (blockEl) {
+          const idx = parseInt(blockEl.getAttribute('data-index'), 10);
+          AppState.activeRewriteIndex = idx;
+          const blocks = DOM.highlightLayer.querySelectorAll('.interleaved-block');
+          blocks.forEach((b) => {
+            const bIdx = parseInt(b.getAttribute('data-index'), 10);
+            b.classList.toggle('active-block', bIdx === idx);
+          });
+        }
+        const err = AppState.errors[errorIndex];
+        if (err) {
+          renderSingleCorrectionCard(err, errorIndex);
+        }
+      } else {
+        if (window.innerWidth <= 1024) {
+          showMobilePopover(errorMark);
+        }
+      }
       return;
     }
 
@@ -1731,11 +1826,6 @@ function setupEventListeners() {
       const idx = parseInt(blockEl.getAttribute('data-index'), 10);
       activateRewriteBlock(idx, true);
       return;
-    }
-
-    const errorMark = e.target.closest('mark[data-error-index]');
-    if (errorMark && window.innerWidth <= 1024) {
-      showMobilePopover(errorMark);
     }
   });
 

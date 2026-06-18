@@ -445,6 +445,10 @@ async function apiHone(text) {
 async function evaluate() {
   if (AppState.inRewriteMode) {
     exitRewriteMode();
+    // If we have evaluation results, just return to switch back to evaluated view
+    if (AppState.overallScore !== null || (AppState.errors && AppState.errors.length > 0)) {
+      return;
+    }
   }
   const text = DOM.textarea.value.trim();
   if (!text) {
@@ -491,6 +495,12 @@ async function rewrite() {
   // Toggle: if already in rewrite mode, exit back to editor
   if (AppState.inRewriteMode) {
     exitRewriteMode();
+    return;
+  }
+
+  // If not in rewrite mode, but we have existing rewriteSentences, just enter rewrite mode!
+  if (AppState.rewriteSentences && AppState.rewriteSentences.length > 0) {
+    enterRewriteMode(AppState.rewriteSentences);
     return;
   }
 
@@ -553,6 +563,7 @@ function enterRewriteMode(sentences) {
 
   // Update button states
   updateButtonStates();
+  saveActiveSession();
 }
 
 /**
@@ -560,7 +571,6 @@ function enterRewriteMode(sentences) {
  */
 function exitRewriteMode() {
   AppState.inRewriteMode = false;
-  AppState.rewriteSentences = [];
   AppState.activeRewriteIndex = null;
 
   // Hide the rewrite banner
@@ -580,6 +590,7 @@ function exitRewriteMode() {
 
   // Update button states
   updateButtonStates();
+  saveActiveSession();
 }
 
 /**
@@ -705,9 +716,12 @@ function loadEntry(id) {
   DOM.textarea.value      = entry.text || '';
   AppState.currentEntryId = entry.id;
 
-  // Clear stale evaluation data
+  // Clear stale evaluation and rewrite data
   AppState.errors = [];
   AppState.appliedFixes = [];
+  AppState.rewriteSentences = [];
+  AppState.overallScore = null;
+  AppState.summary = '';
   renderHighlights(entry.text || '', [], []);
   updateCounts();
   clearCorrections();
@@ -748,6 +762,7 @@ function newEntry() {
   AppState.appliedFixes   = [];
   AppState.overallScore   = null;
   AppState.summary        = '';
+  AppState.rewriteSentences = [];
 
   renderHighlights('', [], []);
   updateCounts();
@@ -877,8 +892,9 @@ function updateButtonStates() {
     DOM.btnEvaluate.disabled = isLoading;
   }
   if (DOM.btnRewrite) {
-    // Keep enabled in rewrite mode so it can toggle back to editor
-    DOM.btnRewrite.disabled = AppState.inRewriteMode ? false : (isLoading || hasErrors);
+    // Keep enabled in rewrite mode so it can toggle back to editor, or if we have existing rewriteSentences
+    const hasRewrite = AppState.rewriteSentences && AppState.rewriteSentences.length > 0;
+    DOM.btnRewrite.disabled = (AppState.inRewriteMode || hasRewrite) ? false : (isLoading || hasErrors);
   }
   if (DOM.btnHone) {
     DOM.btnHone.disabled = isLoading || hasErrors;
@@ -1495,7 +1511,10 @@ function saveActiveSession() {
     overallScore: AppState.overallScore,
     summary: AppState.summary,
     correctionsSidebarOpen: AppState.correctionsSidebarOpen,
-    historySidebarOpen: AppState.historySidebarOpen
+    historySidebarOpen: AppState.historySidebarOpen,
+    inRewriteMode: AppState.inRewriteMode,
+    rewriteSentences: AppState.rewriteSentences,
+    activeRewriteIndex: AppState.activeRewriteIndex
   };
   localStorage.setItem('rde_active_session', JSON.stringify(session));
 }
@@ -1519,16 +1538,48 @@ function restoreActiveSession() {
     AppState.summary = session.summary || '';
     AppState.correctionsSidebarOpen = session.correctionsSidebarOpen || false;
     AppState.historySidebarOpen = session.historySidebarOpen || false;
+    AppState.inRewriteMode = session.inRewriteMode || false;
+    AppState.rewriteSentences = session.rewriteSentences || [];
+    AppState.activeRewriteIndex = session.activeRewriteIndex ?? null;
 
     // Render components
-    renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
-    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
     updateCounts();
+
+    if (AppState.inRewriteMode) {
+      if (DOM.rewriteBanner) DOM.rewriteBanner.style.display = 'flex';
+      DOM.journalContainer?.classList.add('view-rewrite');
+      renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+      
+      if (AppState.activeRewriteIndex !== null && AppState.activeRewriteIndex !== undefined) {
+        const sentence = AppState.rewriteSentences[AppState.activeRewriteIndex];
+        if (sentence) {
+          renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
+        } else {
+          clearCorrections();
+        }
+      } else {
+        if (DOM.summaryText) {
+          DOM.summaryText.innerHTML = `<p><strong>Full-Text Rewrite Comparison</strong></p>`;
+        }
+        if (DOM.correctionsList) {
+          DOM.correctionsList.innerHTML = `
+            <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:0.88rem;font-style:italic;">
+              Interact with a rewritten sentence to view its explanation here.
+            </div>`;
+        }
+      }
+    } else {
+      if (DOM.rewriteBanner) DOM.rewriteBanner.style.display = 'none';
+      DOM.journalContainer?.classList.remove('view-rewrite');
+      renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+      renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+    }
 
     // Sync sidebars
     DOM.historySidebar?.classList.toggle('open', AppState.historySidebarOpen);
     DOM.correctionsSidebar?.classList.toggle('open', AppState.correctionsSidebarOpen);
     updateBackdrop();
+    updateButtonStates();
 
     return true;
   } catch (err) {
@@ -1643,6 +1694,7 @@ function setupEventListeners() {
     if (AppState.inRewriteMode) {
       exitRewriteMode();
     }
+    AppState.rewriteSentences = [];
     updateCounts();
     // Re-render highlights with current errors and applied fixes (keeps marks in sync with edits)
     renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);

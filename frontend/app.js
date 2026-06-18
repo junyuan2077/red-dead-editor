@@ -280,21 +280,34 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
   
   for (let i = 0; i < AppState.rewriteSentences.length; i++) {
     const item = AppState.rewriteSentences[i];
-    let originalText = item.original;
-    let itemStart = text.indexOf(originalText, cursor);
-    let matchedLength = originalText.length;
     
-    if (itemStart === -1) {
-      const prefix = originalText.trim().substring(0, 30);
-      const tempIndex = text.indexOf(prefix, cursor);
-      if (tempIndex !== -1) {
-        itemStart = tempIndex;
-        matchedLength = Math.min(originalText.length, text.length - itemStart);
+    let itemStart;
+    let itemEnd;
+    
+    if (typeof item.start === 'number' && typeof item.end === 'number') {
+      itemStart = item.start;
+      itemEnd = item.end;
+    } else {
+      let originalText = item.original;
+      itemStart = text.indexOf(originalText, cursor);
+      let matchedLength = originalText.length;
+      
+      if (itemStart === -1) {
+        const prefix = originalText.trim().substring(0, 30);
+        const tempIndex = text.indexOf(prefix, cursor);
+        if (tempIndex !== -1) {
+          itemStart = tempIndex;
+          matchedLength = Math.min(originalText.length, text.length - itemStart);
+        }
       }
-    }
-    
-    if (itemStart === -1) {
-      continue;
+      
+      if (itemStart === -1) {
+        continue;
+      }
+      
+      itemEnd = itemStart + matchedLength;
+      item.start = itemStart;
+      item.end = itemEnd;
     }
     
     if (itemStart > cursor) {
@@ -304,10 +317,7 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
       }
     }
     
-    item.start = itemStart;
-    item.end = itemStart + matchedLength;
-    
-    const originalHtml = renderSubstringWithHighlights(text, item.start, item.end, errors, appliedFixes);
+    const originalHtml = renderSubstringWithHighlights(text, itemStart, itemEnd, errors, appliedFixes);
     
     const isActive = (i === AppState.activeRewriteIndex);
     html += `
@@ -316,7 +326,7 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
         <div class="interleaved-rewritten" tabindex="0">${escapeHTML(item.rewritten)}</div>
       </div>`;
       
-    cursor = item.end;
+    cursor = itemEnd;
   }
   
   if (cursor < text.length) {
@@ -1385,7 +1395,6 @@ function setLoading(operation) {
     if (btn) btn.classList.remove('btn--loading');
   });
 
-  if (operation === 'rewrite'  && DOM.btnRewrite)  DOM.btnRewrite.classList.add('btn--loading');
   if (operation === 'hone'     && DOM.btnHone)     DOM.btnHone.classList.add('btn--loading');
 }
 

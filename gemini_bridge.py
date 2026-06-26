@@ -59,10 +59,10 @@ CLI_MODEL_NAME = "claude-opus-4-6"
 # CLI_MODEL_NAME = "gemini-3.5-flash"
 
 # API model (used by Google GenAI SDK)
-API_MODEL_NAME = "gemini-3.5-pro"
+API_MODEL_NAME = "gemini-3.5-flash"
 
 # Initialize Google AI if API key is available
-API_KEY = os.getenv("GOOGLE_API_KEY")
+API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 client = None
 if API_KEY:
     client = genai.Client(api_key=API_KEY)

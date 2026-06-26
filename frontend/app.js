@@ -94,6 +94,10 @@ function initDOMReferences() {
 
   // Toast
   DOM.toastContainer = document.getElementById('toast-container');
+
+  // Mary-Beth avatar
+  DOM.maryBethAvatar = document.getElementById('marybeth-avatar');
+  DOM.maryBethSprite = document.getElementById('marybeth-sprite');
 }
 
 /* --------------------------------------------------------------------------
@@ -1276,6 +1280,8 @@ function applyFix(errorIndex) {
   const err = AppState.errors[errorIndex];
   if (!err) return;
 
+  setMaryBethPose('apply-fix');
+
   const text   = DOM.textarea.value;
   const before = text.substring(0, err.start);
   const after  = text.substring(err.end);
@@ -1462,6 +1468,33 @@ function showToast(message, type = 'info') {
    12. LOADING STATE
    -------------------------------------------------------------------------- */
 
+const DYNAMIC_LOADING_MESSAGES = {
+  evaluate: [
+    "Mary-Beth is dusting off her grammar guides for your pages...",
+    "Scanning the lines to find your hidden gems...",
+    "Looking over your writing with a keen editor's eye...",
+    "Checking your prose by the warm light of the lantern...",
+    "Reading through your frontier tales...",
+    "Mary-Beth is sifting through your words for any stray punctuation..."
+  ],
+  rewrite: [
+    "Mary-Beth is drafting a fresh take in her journal...",
+    "Spinning your words into a new frontier tale...",
+    "Dipping her pen to rewrite your prose...",
+    "Styling a new way to tell your story...",
+    "Scribbling down a few variations for you...",
+    "Fleshing out your sentence with some classic style..."
+  ],
+  hone: [
+    "Mary-Beth is polishing up your prose...",
+    "Whittling your words down to their finest edge...",
+    "Adding some class and charm to your journal...",
+    "Giving your writing that perfect final shine...",
+    "Tuning your tale to sound like a proper frontier epic...",
+    "Mary-Beth is putting the finishing touches on your page..."
+  ]
+};
+
 /**
  * Show or hide the loading overlay and toggle button states.
  * @param {string|null} operation — Active operation name, or null to clear
@@ -1478,12 +1511,17 @@ function setLoading(operation) {
   // Update loading text
   const loadingTextEl = DOM.loadingOverlay?.querySelector('.loading-text');
   if (loadingTextEl) {
-    const messages = {
-      evaluate: 'The scribes are reviewing...',
-      rewrite:  'Rewriting your prose...',
-      hone:     'Polishing your words...',
-    };
-    loadingTextEl.textContent = messages[operation] || 'The scribes are at work...';
+    if (operation) {
+      const messages = DYNAMIC_LOADING_MESSAGES[operation];
+      if (messages && messages.length > 0) {
+        const randomIndex = Math.floor(Math.random() * messages.length);
+        loadingTextEl.textContent = messages[randomIndex];
+      } else {
+        loadingTextEl.textContent = 'The scribes are at work...';
+      }
+    } else {
+      loadingTextEl.textContent = 'The scribes are at work...';
+    }
   }
 
   // Disable/enable all action buttons
@@ -1494,6 +1532,13 @@ function setLoading(operation) {
   buttons.forEach((btn) => {
     if (btn) btn.disabled = AppState.isLoading;
   });
+
+  // Synchronize Mary-Beth avatar pose with the active operation
+  if (operation) {
+    setMaryBethPose(operation);
+  } else {
+    setMaryBethPose('idle-reading');
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -2088,24 +2133,67 @@ function trackSelection() {
 function setupLongPress(btnEl, clickCallback, longPressCallback) {
   if (!btnEl) return;
   
-  let pressTimer = null;
+  // Inject the progress overlay element if it doesn't exist
+  let progressEl = btnEl.querySelector('.btn-hold-progress');
+  if (!progressEl) {
+    progressEl = document.createElement('div');
+    progressEl.className = 'btn-hold-progress';
+    btnEl.appendChild(progressEl);
+  }
+  
+  let animationFrameId = null;
+  let startTime = null;
   let isLongPress = false;
+  let currentEvent = null;
+  const holdDuration = 800; // 800ms for a satisfying hold feel
+  
+  const updateProgress = (timestamp) => {
+    if (!startTime) startTime = timestamp;
+    const elapsed = timestamp - startTime;
+    const progress = Math.min(elapsed / holdDuration, 1);
+    
+    btnEl.style.setProperty('--hold-progress', progress);
+    
+    if (progress < 1) {
+      animationFrameId = requestAnimationFrame(updateProgress);
+    } else {
+      isLongPress = true;
+      btnEl.classList.remove('btn--holding');
+      btnEl.classList.add('btn--fulfilled');
+      
+      const ev = currentEvent;
+      currentEvent = null;
+      
+      longPressCallback(ev);
+      
+      setTimeout(() => {
+        btnEl.classList.remove('btn--fulfilled');
+        btnEl.style.setProperty('--hold-progress', '0');
+      }, 300);
+    }
+  };
   
   const startPress = (e) => {
-    // Only handle left mouse click
     if (e.type === 'mousedown' && e.button !== 0) return;
     
     isLongPress = false;
-    pressTimer = setTimeout(() => {
-      isLongPress = true;
-      longPressCallback(e);
-    }, 600); // 600ms long press duration
+    startTime = null;
+    currentEvent = e;
+    btnEl.classList.add('btn--holding');
+    btnEl.classList.remove('btn--fulfilled');
+    
+    animationFrameId = requestAnimationFrame(updateProgress);
   };
   
   const endPress = (e) => {
-    if (pressTimer) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
+    btnEl.classList.remove('btn--holding');
+    if (animationFrameId) {
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    }
+    if (!isLongPress) {
+      btnEl.style.setProperty('--hold-progress', '0');
+      currentEvent = null;
     }
   };
   
@@ -2129,7 +2217,83 @@ function setupLongPress(btnEl, clickCallback, longPressCallback) {
 }
 
 /* --------------------------------------------------------------------------
-   16. INITIALIZATION
+   16. MARY-BETH AVATAR — Pose Management
+   -------------------------------------------------------------------------- */
+
+const MARYBETH_POSES = {
+  'idle-reading': 'assets/marybeth/idle-reading.png',
+  'evaluate':     'assets/marybeth/evaluate.png',
+  'rewrite':      'assets/marybeth/rewrite.png',
+  'hone':         'assets/marybeth/hone.png',
+  'apply-fix':    'assets/marybeth/apply-fix.png',
+};
+
+let _maryBethPoseTimer = null;
+let _maryBethSwapTimer = null;
+
+/**
+ * Swap Mary-Beth's pose with a smooth fade transition.
+ * Action poses auto-revert to idle-reading after a timeout.
+ *
+ * @param {string} pose — One of: 'idle-reading', 'evaluate', 'rewrite', 'hone', 'apply-fix'
+ */
+function setMaryBethPose(pose) {
+  const sprite = DOM.maryBethSprite;
+  const avatar = DOM.maryBethAvatar;
+  if (!sprite || !avatar) return;
+
+  const src = MARYBETH_POSES[pose];
+  if (!src) return;
+
+  // Clear any pending revert timer
+  if (_maryBethPoseTimer) {
+    clearTimeout(_maryBethPoseTimer);
+    _maryBethPoseTimer = null;
+  }
+
+  // Clear any pending swap timer
+  if (_maryBethSwapTimer) {
+    clearTimeout(_maryBethSwapTimer);
+    _maryBethSwapTimer = null;
+  }
+
+  // Fade out
+  sprite.classList.add('pose-swap');
+
+  // After fade-out completes, swap image and fade back in
+  _maryBethSwapTimer = setTimeout(() => {
+    sprite.src = src;
+    sprite.classList.remove('pose-swap');
+
+    // Toggle active state (pauses breathing, adds glow)
+    if (pose !== 'idle-reading') {
+      avatar.classList.add('pose-active');
+    } else {
+      avatar.classList.remove('pose-active');
+    }
+    _maryBethSwapTimer = null;
+  }, 300);
+
+  // Auto-revert to idle only for non-loading action poses (like 'apply-fix')
+  if (pose === 'apply-fix') {
+    _maryBethPoseTimer = setTimeout(() => {
+      setMaryBethPose('idle-reading');
+    }, 2000);
+  }
+}
+
+/**
+ * Preload all Mary-Beth pose images for instant transitions.
+ */
+function preloadMaryBethImages() {
+  Object.values(MARYBETH_POSES).forEach(src => {
+    const img = new Image();
+    img.src = src;
+  });
+}
+
+/* --------------------------------------------------------------------------
+   17. INITIALIZATION
    -------------------------------------------------------------------------- */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -2158,6 +2322,9 @@ document.addEventListener('DOMContentLoaded', () => {
   syncHighlightScroll();
 
   updateButtonStates();
+
+  // Preload Mary-Beth avatar poses
+  preloadMaryBethImages();
 
   console.log(
     '%c🤠 Red Dead Editor loaded. Write well, partner.',

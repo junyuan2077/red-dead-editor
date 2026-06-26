@@ -69,7 +69,7 @@
   --space-2xl: 48px;
 
   /* === Sizing === */
-  --header-height: 72px;
+  --header-height: 90px;
   --sidebar-width-left:  280px;
   --sidebar-width-right: 408px;
   --radius-sm: 4px;
@@ -233,7 +233,7 @@ body::after {
 
 .header-title {
   font-family: 'RedDead', 'Georgia', serif;
-  font-size: clamp(1.4rem, 3vw, 2rem);
+  font-size: clamp(1.4rem, 3.2vw, 2.1rem);
   font-weight: normal;
   color: var(--gold);
   letter-spacing: 0.12em;
@@ -245,12 +245,12 @@ body::after {
 
 .header-subtitle {
   font-family: 'RedDeadText', 'Lora', serif;
-  font-size: clamp(0.65rem, 1.5vw, 0.8rem);
+  font-size: clamp(0.7rem, 1.6vw, 0.85rem);
   color: var(--text-muted);
   letter-spacing: 0.25em;
   text-transform: uppercase;
   opacity: 0.7;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 /* Sidebar toggle buttons — hidden on desktop, shown on mobile */
@@ -268,6 +268,55 @@ body::after {
 .sidebar-toggle:hover {
   color: var(--gold);
   background: rgba(199, 164, 74, 0.1);
+}
+
+/* --------------------------------------------------------------------------
+   5b. MARY-BETH AVATAR
+   Sits on the right side of the header, overflowing into the main body.
+   -------------------------------------------------------------------------- */
+
+.marybeth-avatar {
+  position: absolute;
+  right: 36px;
+  bottom: 8px; /* Sits cleanly inside the header, above the red line */
+  z-index: 101; /* Above the header and its ::after stripe */
+  width: 60px;   /* Scaled down to fit within a 90px header height */
+  height: 80px;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.4))
+          drop-shadow(0 0 15px rgba(199, 164, 74, 0.1));
+  transition: filter var(--transition-base);
+}
+
+.marybeth-sprite {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: bottom center;
+  animation: marybeth-breathe 4s ease-in-out infinite;
+  transition: opacity 0.3s ease;
+}
+
+/* Gentle breathing / idle bob */
+@keyframes marybeth-breathe {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+
+/* Pose transition: brief fade */
+.marybeth-sprite.pose-swap {
+  opacity: 0;
+  transform: translateY(2px);
+}
+
+/* Active action pose — pause the breathing, subtle glow */
+.marybeth-avatar.pose-active .marybeth-sprite {
+  animation: none;
+}
+
+.marybeth-avatar.pose-active {
+  filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.6))
+          drop-shadow(0 0 24px rgba(199, 164, 74, 0.25));
 }
 
 /* --------------------------------------------------------------------------
@@ -659,34 +708,25 @@ body::after {
   display: flex;
 }
 
-.loading-spinner {
+.loading-overlay .marybeth-avatar {
   position: relative;
-  width: 60px;
-  height: 60px;
+  right: auto;
+  bottom: auto;
+  z-index: 2;
+  width: 140px;  /* fit size - appropriate size to display Mary-Beth inside the text area overlay */
+  height: 187px; /* 3:4 aspect ratio */
+  display: block !important; /* Ensure it is always shown even if global media queries try to hide it */
+  filter: drop-shadow(0 4px 15px rgba(0, 0, 0, 0.6))
+          drop-shadow(0 0 25px rgba(199, 164, 74, 0.25));
+  margin-bottom: var(--space-xs);
+  pointer-events: none;
 }
 
-.spinner-ring {
-  position: absolute;
-  inset: 0;
-  border: 3px solid transparent;
-  border-radius: 50%;
-}
-
-.spinner-ring:nth-child(1) {
-  border-top-color: var(--gold);
-  animation: spin 1.2s linear infinite;
-}
-
-.spinner-ring:nth-child(2) {
-  inset: 6px;
-  border-right-color: var(--red-bright);
-  animation: spin 1.6s linear infinite reverse;
-}
-
-.spinner-ring:nth-child(3) {
-  inset: 12px;
-  border-bottom-color: var(--parchment-dark);
-  animation: spin 2s linear infinite;
+.loading-overlay .marybeth-sprite {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: bottom center;
 }
 
 .loading-text {
@@ -1259,6 +1299,11 @@ body::after {
     --header-height: 60px;
   }
 
+  /* Hide Mary-Beth avatar on mobile */
+  .marybeth-avatar {
+    display: none;
+  }
+
   .header-title {
     font-size: 1.2rem;
     letter-spacing: 0.08em;
@@ -1336,6 +1381,10 @@ body::after {
 @media (max-width: 480px) {
   :root {
     --header-height: 54px;
+  }
+
+  .marybeth-avatar {
+    display: none;
   }
 
   .header-title {
@@ -1556,6 +1605,52 @@ body::after {
   padding: 0 var(--space-sm);
   margin-bottom: 16px;
   opacity: 0.85;
+}
+
+/* --- Hold to Fulfill Progress Animation --- */
+.btn-hold-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: currentColor;
+  opacity: 0.18;
+  pointer-events: none;
+  transform: scaleX(var(--hold-progress, 0));
+  transform-origin: left;
+  transition: transform 0.05s linear;
+  z-index: 1;
+}
+
+/* Ensure button content stays above progress overlay */
+.btn-icon,
+.btn-label {
+  position: relative;
+  z-index: 2;
+}
+
+/* Button scaling and active borders during active hold */
+.btn.btn--holding {
+  transform: scale(0.97);
+  border-color: currentColor;
+  box-shadow: 0 0 15px rgba(199, 164, 74, 0.2);
+}
+
+/* Pulse/flash effect on successful hold completion */
+.btn.btn--fulfilled {
+  animation: btn-flash 0.3s ease-out;
+}
+
+@keyframes btn-flash {
+  0% {
+    background: currentColor;
+    color: var(--ink, #2c1810);
+    box-shadow: 0 0 25px currentColor;
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 /* --------------------------------------------------------------------------

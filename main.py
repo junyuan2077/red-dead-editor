@@ -230,6 +230,22 @@ async def text_to_speech(req: TTSRequest) -> StreamingResponse:
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
+            # Dynamically set the GPT and SoVITS models to the requested charlotte voice checkpoints
+            gpt_path = os.path.join(BASE_DIR, "charlotte-e15.ckpt")
+            sovits_path = os.path.join(BASE_DIR, "charlotte_e8_s112.pth")
+            
+            try:
+                logger.info("Setting GPT-SoVITS GPT model weights to %s", gpt_path)
+                await client.get(f"{GPT_SOVITS_URL}/set_gpt_weights", params={"weights_path": gpt_path})
+            except Exception as e:
+                logger.warning("Failed to dynamically set GPT weights: %s", e)
+
+            try:
+                logger.info("Setting GPT-SoVITS SoVITS model weights to %s", sovits_path)
+                await client.get(f"{GPT_SOVITS_URL}/set_sovits_weights", params={"weights_path": sovits_path})
+            except Exception as e:
+                logger.warning("Failed to dynamically set SoVITS weights: %s", e)
+
             resp = await client.post(f"{GPT_SOVITS_URL}/tts", json=payload)
             resp.raise_for_status()
 

@@ -908,6 +908,16 @@ const audioCache = new AudioCache();
 let currentAudio = null;
 let currentAudioElement = null;
 
+// Pre-warm Web Speech API voices to ensure they are loaded when needed
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  window.speechSynthesis.getVoices();
+  if (window.speechSynthesis.onvoiceschanged !== undefined) {
+    window.speechSynthesis.onvoiceschanged = () => {
+      window.speechSynthesis.getVoices();
+    };
+  }
+}
+
 /**
  * Play synthesized voice audio for the given text.
  * @param {string} text - The text to synthesize and play

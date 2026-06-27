@@ -649,6 +649,14 @@ function enterRewriteMode(sentences) {
 function exitRewriteMode() {
   AppState.inRewriteMode = false;
   AppState.activeRewriteIndex = null;
+  if (currentAudio) {
+    currentAudio.pause();
+    if (currentAudioElement) {
+      currentAudioElement.classList.remove('audio-playing', 'audio-loading');
+    }
+    currentAudio = null;
+    currentAudioElement = null;
+  }
   if (DOM.highlightLayer) {
     DOM.highlightLayer.setAttribute('aria-hidden', 'true');
   }
@@ -818,6 +826,259 @@ function exitHoneMode(restoreText = false) {
 /* --------------------------------------------------------------------------
    8. TTS PLAYBACK
    -------------------------------------------------------------------------- */
+
+class AudioCache {
+  constructor(dbName = 'rdo_audio_cache', storeName = 'audio') {
+    this._map = new Map();           // Fast synchronous mirror
+    this._dbName = dbName;
+    this._storeName = storeName;
+    this._db = null;
+    this._ready = this._open();      // Resolves once DB is open and memory is seeded
+  }
+
+  /** Open (or create) the IndexedDB database and seed the in-memory map. */
+  async _open() {
+    return new Promise((resolve) => {
+      const req = indexedDB.open(this._dbName, 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore(this._storeName);
+      };
+      req.onsuccess = () => {
+        this._db = req.result;
+        this._seed().then(resolve).catch(resolve); // resolve even if seed fails
+      };
+      req.onerror = () => {
+        console.warn('[AudioCache] IndexedDB open failed, falling back to memory-only.');
+        resolve();
+      };
+    });
+  }
+
+  /** Load all existing entries from IndexedDB into the in-memory Map. */
+  async _seed() {
+    if (!this._db) return;
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction(this._storeName, 'readonly');
+      const store = tx.objectStore(this._storeName);
+      const req = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          this._map.set(cursor.key, cursor.value);
+          cursor.continue();
+        } else {
+          console.log(`[AudioCache] Loaded ${this._map.size} cached audio entries from IndexedDB.`);
+          resolve();
+        }
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Wait until the DB is open and memory is seeded. */
+  async waitReady() {
+    return this._ready;
+  }
+
+  /** Synchronous check — uses the in-memory mirror. */
+  has(key) {
+    return this._map.has(key);
+  }
+
+  /** Synchronous get — uses the in-memory mirror. */
+  get(key) {
+    return this._map.get(key);
+  }
+
+  /** Store a blob in both memory and IndexedDB. */
+  set(key, blob) {
+    this._map.set(key, blob);
+    if (this._db) {
+      try {
+        const tx = this._db.transaction(this._storeName, 'readwrite');
+        tx.objectStore(this._storeName).put(blob, key);
+      } catch (err) {
+        console.warn('[AudioCache] IndexedDB write failed:', err.message);
+      }
+    }
+  }
+}
+
+const audioCache = new AudioCache();
+let currentAudio = null;
+let currentAudioElement = null;
+
+/**
+ * Play synthesized voice audio for the given text.
+ * @param {string} text - The text to synthesize and play
+ * @param {HTMLElement} element - The .interleaved-rewritten element clicked
+ */
+async function playTTS(text, element) {
+  // If we are already playing this exact element, toggle pause/play
+  if (currentAudioElement === element && currentAudio) {
+    if (window.speechSynthesis && window.speechSynthesis.speaking && currentAudio.pause === window.speechSynthesis.cancel) {
+      // Toggle native SpeechSynthesis
+      window.speechSynthesis.cancel();
+      element.classList.remove('audio-playing');
+      currentAudio = null;
+      currentAudioElement = null;
+      return;
+    } else if (currentAudio.paused !== undefined) {
+      // Toggle Audio Element
+      if (!currentAudio.paused) {
+        currentAudio.pause();
+        element.classList.remove('audio-playing');
+        return;
+      } else {
+        element.classList.add('audio-playing');
+        currentAudio.play().catch(err => {
+          console.error('Audio play failed:', err);
+          cleanup();
+        });
+        return;
+      }
+    }
+  }
+
+  // Stop any currently playing audio and clean up its styling
+  if (currentAudio) {
+    currentAudio.pause();
+    if (currentAudioElement) {
+      currentAudioElement.classList.remove('audio-playing', 'audio-loading');
+    }
+    currentAudio = null;
+    currentAudioElement = null;
+  }
+
+  currentAudioElement = element;
+  element.classList.add('audio-loading');
+
+  const cleanup = () => {
+    element.classList.remove('audio-loading', 'audio-playing');
+    if (currentAudioElement === element) {
+      currentAudio = null;
+      currentAudioElement = null;
+    }
+  };
+
+  try {
+    let blob;
+    if (audioCache.has(text)) {
+      blob = audioCache.get(text);
+    } else {
+      try {
+        const res = await fetch(`${API_BASE}/api/tts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `HTTP error ${res.status}`);
+        }
+
+        blob = await res.blob();
+        audioCache.set(text, blob);
+      } catch (fetchErr) {
+        console.warn('Backend TTS failed, trying browser SpeechSynthesis fallback:', fetchErr);
+        // Verify user didn't click away or click another item during fetch
+        if (currentAudioElement !== element) return;
+        playSpeechSynthesisFallback(text, element);
+        return;
+      }
+    }
+
+    // Verify user didn't click away or click another item during fetch
+    if (currentAudioElement !== element) return;
+
+    element.classList.remove('audio-loading');
+    element.classList.add('audio-playing');
+
+    const audioUrl = URL.createObjectURL(blob);
+    const audio = new Audio(audioUrl);
+    currentAudio = audio;
+
+    audio.onended = () => {
+      cleanup();
+    };
+
+    audio.onerror = () => {
+      showToast('Error playing audio.', 'error');
+      cleanup();
+    };
+
+    await audio.play();
+
+  } catch (err) {
+    console.error('TTS playback failed:', err);
+    showToast(err.message || 'Voice synthesis failed.', 'error');
+    cleanup();
+  }
+}
+
+/**
+ * Fallback to browser SpeechSynthesis API if backend TTS is unavailable.
+ */
+function playSpeechSynthesisFallback(text, element) {
+  if (!('speechSynthesis' in window)) {
+    showToast('Voice synthesis is not supported in this browser.', 'error');
+    element.classList.remove('audio-loading', 'audio-playing');
+    if (currentAudioElement === element) {
+      currentAudio = null;
+      currentAudioElement = null;
+    }
+    return;
+  }
+
+  // Stop any ongoing native speech
+  window.speechSynthesis.cancel();
+
+  element.classList.remove('audio-loading');
+  element.classList.add('audio-playing');
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  
+  // Try to find a suitable English voice (e.g. Google, British, US)
+  const voices = window.speechSynthesis.getVoices();
+  const englishVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Google')) ||
+                      voices.find(v => v.lang.startsWith('en')) ||
+                      voices[0];
+  if (englishVoice) {
+    utterance.voice = englishVoice;
+  }
+
+  // Adjust pitch/rate slightly for that classic storyteller feel
+  utterance.pitch = 0.95;
+  utterance.rate = 0.9;
+
+  utterance.onend = () => {
+    element.classList.remove('audio-playing');
+    if (currentAudioElement === element) {
+      currentAudio = null;
+      currentAudioElement = null;
+    }
+  };
+
+  utterance.onerror = (e) => {
+    if (e.error !== 'interrupted') {
+      showToast('Native speech synthesis failed.', 'error');
+    }
+    element.classList.remove('audio-playing');
+    if (currentAudioElement === element) {
+      currentAudio = null;
+      currentAudioElement = null;
+    }
+  };
+
+  // Keep a mock audio controller to pause / stop native speech
+  currentAudio = {
+    pause: () => window.speechSynthesis.cancel(),
+    paused: false
+  };
+
+  window.speechSynthesis.speak(utterance);
+}
 
 
 
@@ -2174,6 +2435,22 @@ function setupEventListeners() {
         if (window.innerWidth <= 1024) {
           showMobilePopover(errorMark);
         }
+      }
+      return;
+    }
+
+    // Clicked specifically on the rewritten sentence block to play TTS
+    const rewrittenEl = e.target.closest('.interleaved-rewritten');
+    if (rewrittenEl) {
+      e.stopPropagation();
+      const blockEl = rewrittenEl.closest('.interleaved-block');
+      if (blockEl) {
+        const idx = parseInt(blockEl.getAttribute('data-index'), 10);
+        activateRewriteBlock(idx, true);
+      }
+      const text = rewrittenEl.textContent.trim();
+      if (text) {
+        playTTS(text, rewrittenEl);
       }
       return;
     }

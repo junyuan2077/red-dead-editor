@@ -659,6 +659,11 @@ body::after {
   /* Match the highlight layer exactly */
 }
 
+.editor-textarea:read-only {
+  caret-color: transparent;
+  color: #d1d1ca; /* slightly dimmer chalk white */
+}
+
 .editor-textarea::placeholder {
   color: var(--parchment-dark);
   opacity: 0.6;
@@ -716,10 +721,9 @@ body::after {
   width: 140px;  /* fit size - appropriate size to display Mary-Beth inside the text area overlay */
   height: 187px; /* 3:4 aspect ratio */
   display: block !important; /* Ensure it is always shown even if global media queries try to hide it */
-  filter: drop-shadow(0 4px 15px rgba(0, 0, 0, 0.6))
-          drop-shadow(0 0 25px rgba(199, 164, 74, 0.25));
   margin-bottom: var(--space-xs);
   pointer-events: none;
+  opacity: 0.94; /* Deeper integration with background texture */
 }
 
 .loading-overlay .marybeth-sprite {
@@ -727,6 +731,42 @@ body::after {
   height: 100%;
   object-fit: contain;
   object-position: bottom center;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5))
+          sepia(25%) contrast(1.05) brightness(0.88);
+  transition: opacity 0.3s ease;
+}
+
+/* Custom dynamic waiting/fidgeting state */
+.loading-overlay .marybeth-avatar.pose-active .marybeth-sprite {
+  animation: marybeth-waiting-fidget 6s ease-in-out infinite;
+}
+
+@keyframes marybeth-waiting-fidget {
+  0%, 100% {
+    transform: rotate(0deg) translateY(0) scale(1);
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5))
+            sepia(25%) contrast(1.05) brightness(0.88);
+  }
+  20% {
+    transform: rotate(-1.5deg) translateY(-2px) translateX(-0.5px) scale(0.995);
+    filter: drop-shadow(0 6px 15px rgba(0, 0, 0, 0.55))
+            sepia(28%) contrast(1.08) brightness(0.92);
+  }
+  40% {
+    transform: rotate(1deg) translateY(-4px) translateX(0.5px) scale(1);
+    filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.5))
+            sepia(25%) contrast(1.05) brightness(0.90);
+  }
+  60% {
+    transform: rotate(-0.5deg) translateY(-1px) translateX(1px) scale(0.995);
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5))
+            sepia(28%) contrast(1.08) brightness(0.88);
+  }
+  80% {
+    transform: rotate(1.5deg) translateY(-3px) translateX(-0.5px) scale(1);
+    filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.55))
+            sepia(25%) contrast(1.05) brightness(0.92);
+  }
 }
 
 .loading-text {
@@ -1549,7 +1589,19 @@ body::after {
   pointer-events: auto !important;
   user-select: text !important;
   -webkit-user-select: text !important;
-  padding-top: 48px !important; /* Make room for the banner */
+  padding-top: 28px !important; /* Align to the first ruled line (Ruled Line 1) under the banner on desktop */
+}
+
+@media (max-width: 1024px) {
+  .journal-container.view-rewrite .highlight-layer {
+    padding-top: calc(22px + var(--editor-line-height)) !important; /* Keep offset on mobile/tablet to avoid overlapping banner */
+  }
+}
+
+@media (max-width: 480px) {
+  .journal-container.view-rewrite .highlight-layer {
+    padding-top: calc(18px + var(--editor-line-height)) !important; /* Keep offset on mobile/tablet to avoid overlapping banner */
+  }
 }
 
 .journal-container.view-rewrite .highlight-layer mark {
@@ -1560,33 +1612,33 @@ body::after {
 .interleaved-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
-  padding: var(--space-xs) 0;
+  gap: 0 !important; /* No gap to align with vertical grid lines */
+  margin-bottom: 0 !important;
+  padding: 0 !important;
   border-radius: var(--radius-md);
   transition: background var(--transition-fast);
 }
 
 .interleaved-original {
   font-size: 1.05em;
-  line-height: var(--editor-line-height);
-  padding: 0 var(--space-sm);
+  line-height: var(--editor-line-height) !important;
+  padding: 0 var(--space-sm) !important;
   color: var(--text-light);
 }
 
 .interleaved-rewritten {
   font-size: 0.98em;
-  line-height: var(--editor-line-height);
+  line-height: var(--editor-line-height) !important;
   color: var(--gold-light);
   font-style: italic;
-  padding: 10px 14px;
+  padding: 0 14px !important; /* Keep horizontal padding, remove vertical padding */
   background: rgba(199, 164, 74, 0.05);
   border-left: 3px solid var(--gold-dim);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   cursor: pointer;
   outline: none;
   transition: all var(--transition-fast);
-  margin-top: 2px;
+  margin: 0 !important; /* Remove margins to maintain grid alignment */
 }
 
 .interleaved-rewritten:hover,
@@ -1602,9 +1654,11 @@ body::after {
 }
 
 .interleaved-separator {
-  padding: 0 var(--space-sm);
-  margin-bottom: 16px;
+  padding: 0 var(--space-sm) !important;
+  margin: 0 !important;
+  line-height: var(--editor-line-height) !important;
   opacity: 0.85;
+  white-space: pre-wrap;
 }
 
 /* --- Hold to Fulfill Progress Animation --- */

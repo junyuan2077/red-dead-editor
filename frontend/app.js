@@ -45,10 +45,19 @@ const AppState = {
   lastRestoredError:     null,
   inRewriteMode:         false,
   rewriteSentences:      [],
+  rewriteOriginalText:   null,
   activeRewriteIndex:    null,
   honedText:             null,
   honeImprovements:      [],
   inHoneMode:            false,
+  evaluatedOnce:         false,
+  rewrittenOnce:         false,
+  honedOnce:             false,
+  textBeforeHone:         null,
+  errorsBeforeHone:       [],
+  appliedFixesBeforeHone: [],
+  overallScoreBeforeHone: null,
+  summaryBeforeHone:      '',
 };
 
 /* --------------------------------------------------------------------------
@@ -282,6 +291,9 @@ function renderSubstringWithHighlights(text, startOffset, endOffset, errors, app
  * Render the full-text interleaved original and rewritten sentences.
  */
 function renderInterleavedRewrite(text, errors, appliedFixes) {
+  // Use the original text that rewrite offsets were computed against,
+  // falling back to the passed-in text if not available.
+  const displayText = AppState.rewriteOriginalText || text;
   let cursor = 0;
   let html = '';
   
@@ -296,15 +308,15 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
       itemEnd = item.end;
     } else {
       let originalText = item.original;
-      itemStart = text.indexOf(originalText, cursor);
+      itemStart = displayText.indexOf(originalText, cursor);
       let matchedLength = originalText.length;
       
       if (itemStart === -1) {
         const prefix = originalText.trim().substring(0, 30);
-        const tempIndex = text.indexOf(prefix, cursor);
+        const tempIndex = displayText.indexOf(prefix, cursor);
         if (tempIndex !== -1) {
           itemStart = tempIndex;
-          matchedLength = Math.min(originalText.length, text.length - itemStart);
+          matchedLength = Math.min(originalText.length, displayText.length - itemStart);
         }
       }
       
@@ -318,13 +330,14 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
     }
     
     if (itemStart > cursor) {
-      const sepText = text.substring(cursor, itemStart);
-      if (sepText.trim() || sepText.includes('\n')) {
-        html += `<div class="interleaved-separator">${escapeHTML(sepText).replace(/\n/g, '<br>')}</div>`;
+      const sepText = displayText.substring(cursor, itemStart);
+      // Only render separator if it's not at the very beginning of the document, or if it contains non-whitespace content at the beginning
+      if ((cursor > 0 && (sepText.trim() || sepText.includes('\n'))) || (cursor === 0 && sepText.trim())) {
+        html += `<div class="interleaved-separator">${escapeHTML(sepText)}</div>`;
       }
     }
     
-    const originalHtml = renderSubstringWithHighlights(text, itemStart, itemEnd, errors, appliedFixes);
+    const originalHtml = renderSubstringWithHighlights(displayText, itemStart, itemEnd, errors, appliedFixes);
     
     const isActive = (i === AppState.activeRewriteIndex);
     html += `
@@ -336,10 +349,10 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
     cursor = itemEnd;
   }
   
-  if (cursor < text.length) {
-    const sepText = text.substring(cursor);
+  if (cursor < displayText.length) {
+    const sepText = displayText.substring(cursor);
     if (sepText.trim() || sepText.includes('\n')) {
-      html += `<div class="interleaved-separator">${escapeHTML(sepText).replace(/\n/g, '<br>')}</div>`;
+      html += `<div class="interleaved-separator">${escapeHTML(sepText)}</div>`;
     }
   }
 
@@ -450,17 +463,29 @@ async function apiHone(text) {
  * EVALUATE — Analyze the current text for grammar, style, and spelling errors.
  */
 async function evaluate(force = false) {
+  const isSwitchingBack = (AppState.inRewriteMode || AppState.inHoneMode);
+
   if (AppState.inRewriteMode) {
     exitRewriteMode();
   }
   if (AppState.inHoneMode) {
-    exitHoneMode();
+    exitHoneMode(true);
+  }
+
+  if (!force && isSwitchingBack) {
+    return;
   }
 
   // If not forcing, and we already have evaluation results for this text, just restore them and return!
   if (!force && (AppState.overallScore !== null || (AppState.errors && AppState.errors.length > 0))) {
     renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
     renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+    return;
+  }
+
+  // Prevent re-triggering via standard click if already evaluated once
+  if (!force && AppState.evaluatedOnce) {
+    showToast('Hold Evaluate button to re-evaluate, partner.', 'warning');
     return;
   }
 
@@ -480,6 +505,7 @@ async function evaluate(force = false) {
     AppState.appliedFixes = []; // Reset applied fixes on fresh evaluation
     AppState.overallScore = data.score ?? null;
     AppState.summary      = data.summary || '';
+    AppState.evaluatedOnce = true;
 
     // Clear rewrite/hone cache since we have a fresh evaluation
     AppState.rewriteSentences = [];
@@ -511,8 +537,19 @@ async function evaluate(force = false) {
 }
 
 async function rewrite(force = false) {
+  // If clicking Rewrite while in Hone view:
+  if (AppState.inHoneMode) {
+    exitHoneMode(true);
+    await rewrite(false);
+    return;
+  }
+
   // Toggle: if already in rewrite mode, exit back to editor
   if (AppState.inRewriteMode && !force) {
+    if (AppState.rewrittenOnce || AppState.honedOnce) {
+      // Rule 1: No action is taken; the interface remains unchanged.
+      return;
+    }
     exitRewriteMode();
     return;
   }
@@ -520,9 +557,15 @@ async function rewrite(force = false) {
   // If not in rewrite mode, but we have existing rewriteSentences, and we are not forcing, just enter rewrite mode!
   if (!force && AppState.rewriteSentences && AppState.rewriteSentences.length > 0) {
     if (AppState.inHoneMode) {
-      exitHoneMode();
+      exitHoneMode(false);
     }
     enterRewriteMode(AppState.rewriteSentences);
+    return;
+  }
+
+  // Prevent re-triggering via standard click if already rewritten once
+  if (!force && AppState.rewrittenOnce) {
+    showToast('Hold Rewrite button to re-generate, partner.', 'warning');
     return;
   }
 
@@ -539,8 +582,9 @@ async function rewrite(force = false) {
     const data = await apiRewrite(text, "");
     
     if (data.sentences && data.sentences.length > 0) {
+      AppState.rewrittenOnce = true;
       if (AppState.inHoneMode) {
-        exitHoneMode();
+        exitHoneMode(false);
       }
       enterRewriteMode(data.sentences);
       showToast('Article rewritten successfully.', 'success');
@@ -561,6 +605,13 @@ async function rewrite(force = false) {
 function enterRewriteMode(sentences) {
   AppState.inRewriteMode = true;
   AppState.rewriteSentences = sentences;
+  // Capture the original text that rewrite offsets are computed against
+  if (!AppState.rewriteOriginalText) {
+    AppState.rewriteOriginalText = DOM.textarea.value;
+  }
+  if (DOM.highlightLayer) {
+    DOM.highlightLayer.removeAttribute('aria-hidden');
+  }
 
   // Show the rewrite banner
   if (DOM.rewriteBanner) {
@@ -589,6 +640,7 @@ function enterRewriteMode(sentences) {
   // Update button states
   updateButtonStates();
   saveActiveSession();
+  autoSaveEntry();
 }
 
 /**
@@ -597,6 +649,9 @@ function enterRewriteMode(sentences) {
 function exitRewriteMode() {
   AppState.inRewriteMode = false;
   AppState.activeRewriteIndex = null;
+  if (DOM.highlightLayer) {
+    DOM.highlightLayer.setAttribute('aria-hidden', 'true');
+  }
 
   // Hide the rewrite banner
   if (DOM.rewriteBanner) {
@@ -622,24 +677,48 @@ function exitRewriteMode() {
  * HONE — Polish the entire text.
  */
 async function hone(force = false) {
+  // If clicking Hone while in Rewrite view:
+  if (AppState.inRewriteMode) {
+    exitRewriteMode();
+    await hone(false);
+    return;
+  }
+
   // Toggle: if already in hone mode, exit back to standard editor view
   if (AppState.inHoneMode && !force) {
-    exitHoneMode();
+    if (AppState.rewrittenOnce || AppState.honedOnce) {
+      // Rule 1: No action is taken; the interface remains unchanged.
+      return;
+    }
+    exitHoneMode(true);
     return;
   }
 
   // If not in hone mode, but we have cached honed results, and we are not forcing, display them!
-  if (!force && AppState.honedText && AppState.honeImprovements && AppState.honeImprovements.length > 0) {
+  if (!force && AppState.honedText) {
     AppState.inHoneMode = true;
+    if (DOM.textarea) DOM.textarea.readOnly = true;
     if (AppState.inRewriteMode) {
       exitRewriteMode();
     }
+    AppState.textBeforeHone = DOM.textarea.value;
+    AppState.errorsBeforeHone = [...AppState.errors];
+    AppState.appliedFixesBeforeHone = [...AppState.appliedFixes];
+    AppState.overallScoreBeforeHone = AppState.overallScore;
+    AppState.summaryBeforeHone = AppState.summary;
+
     DOM.textarea.value = AppState.honedText;
     renderHighlights(AppState.honedText, [], []);
-    renderHoneResults(AppState.honeImprovements);
+    renderHoneResults(AppState.honeImprovements || []);
     updateCounts();
     updateButtonStates();
     saveActiveSession();
+    return;
+  }
+
+  // Prevent re-triggering via standard click if already honed once
+  if (!force && AppState.honedOnce) {
+    showToast('Hold Hone button to re-generate, partner.', 'warning');
     return;
   }
 
@@ -655,13 +734,24 @@ async function hone(force = false) {
     const data  = await apiHone(text);
     const honed = data.honed || text;
 
+    AppState.textBeforeHone = DOM.textarea.value;
+    AppState.errorsBeforeHone = [...AppState.errors];
+    AppState.appliedFixesBeforeHone = [...AppState.appliedFixes];
+    AppState.overallScoreBeforeHone = AppState.overallScore;
+    AppState.summaryBeforeHone = AppState.summary;
+
     AppState.honedText = honed;
     AppState.honeImprovements = data.improvements || [];
     AppState.inHoneMode = true;
+    if (DOM.textarea) DOM.textarea.readOnly = true;
+    AppState.honedOnce = true;
 
     if (AppState.inRewriteMode) {
       AppState.inRewriteMode = false;
       AppState.activeRewriteIndex = null;
+      if (DOM.highlightLayer) {
+        DOM.highlightLayer.setAttribute('aria-hidden', 'true');
+      }
       if (DOM.rewriteBanner) {
         DOM.rewriteBanner.style.display = 'none';
       }
@@ -697,9 +787,27 @@ async function hone(force = false) {
 
 /**
  * Exit the hone view mode.
+ * @param {boolean} restoreText - If true, restores the editor text and evaluate state to what they were before honing
  */
-function exitHoneMode() {
+function exitHoneMode(restoreText = false) {
   AppState.inHoneMode = false;
+  if (DOM.textarea) DOM.textarea.readOnly = false;
+
+  if (restoreText && AppState.textBeforeHone !== null && AppState.textBeforeHone !== undefined) {
+    DOM.textarea.value = AppState.textBeforeHone;
+    AppState.errors = AppState.errorsBeforeHone || [];
+    AppState.appliedFixes = AppState.appliedFixesBeforeHone || [];
+    AppState.overallScore = AppState.overallScoreBeforeHone;
+    AppState.summary = AppState.summaryBeforeHone || '';
+  }
+
+  // Clear backups
+  AppState.textBeforeHone = null;
+  AppState.errorsBeforeHone = [];
+  AppState.appliedFixesBeforeHone = [];
+  AppState.overallScoreBeforeHone = null;
+  AppState.summaryBeforeHone = '';
+
   clearCorrections();
   renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
   renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
@@ -778,7 +886,7 @@ function loadEntry(id) {
     exitRewriteMode();
   }
   if (AppState.inHoneMode) {
-    exitHoneMode();
+    exitHoneMode(false);
   }
   const entries = getEntries();
   const entry   = entries.find((e) => e.id === id);
@@ -791,10 +899,14 @@ function loadEntry(id) {
   AppState.errors = entry.errors || [];
   AppState.appliedFixes = entry.appliedFixes || [];
   AppState.rewriteSentences = entry.rewriteSentences || [];
+  AppState.rewriteOriginalText = entry.rewriteOriginalText || null;
   AppState.overallScore = entry.overallScore ?? null;
   AppState.summary = entry.summary || '';
   AppState.honedText = entry.honedText ?? null;
   AppState.honeImprovements = entry.honeImprovements || [];
+  AppState.evaluatedOnce = (AppState.overallScore !== null || AppState.errors.length > 0);
+  AppState.rewrittenOnce = (AppState.rewriteSentences && AppState.rewriteSentences.length > 0);
+  AppState.honedOnce = (AppState.honedText !== null && AppState.honeImprovements.length > 0);
 
   renderHighlights(entry.text || '', AppState.errors, AppState.appliedFixes);
   renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
@@ -831,7 +943,7 @@ function newEntry() {
     exitRewriteMode();
   }
   if (AppState.inHoneMode) {
-    exitHoneMode();
+    exitHoneMode(false);
   }
   DOM.textarea.value      = '';
   AppState.currentEntryId = null;
@@ -840,8 +952,12 @@ function newEntry() {
   AppState.overallScore   = null;
   AppState.summary        = '';
   AppState.rewriteSentences = [];
+  AppState.rewriteOriginalText = null;
   AppState.honedText = null;
   AppState.honeImprovements = [];
+  AppState.evaluatedOnce = false;
+  AppState.rewrittenOnce = false;
+  AppState.honedOnce = false;
 
   renderHighlights('', [], []);
   updateCounts();
@@ -974,12 +1090,13 @@ function updateButtonStates() {
     DOM.btnEvaluate.disabled = isLoading;
   }
   if (DOM.btnRewrite) {
-    // Keep enabled in rewrite mode so it can toggle back to editor, or if we have existing rewriteSentences
+    // Enable if currently in rewrite mode, if cached results exist (so user can view them again), or if evaluated and no errors remain
     DOM.btnRewrite.disabled = (AppState.inRewriteMode || hasRewrite) 
       ? false 
       : (isLoading || !isEvaluated || hasErrors);
   }
   if (DOM.btnHone) {
+    // Enable if currently in hone mode, if cached results exist (so user can view them again), or if evaluated and no errors remain
     DOM.btnHone.disabled = (AppState.inHoneMode || hasHone) 
       ? false 
       : (isLoading || !isEvaluated || hasErrors);
@@ -990,7 +1107,12 @@ function updateButtonStates() {
  * Automatically saves the current text to the journal entries in localStorage.
  */
 function autoSaveEntry() {
-  const text = DOM.textarea ? DOM.textarea.value : '';
+  // When in hone mode, save the original (pre-hone) text and evaluation state
+  // as the entry's canonical data. The honed text is stored separately as `honedText`.
+  const inHone = AppState.inHoneMode && AppState.textBeforeHone != null;
+  const text = inHone
+    ? AppState.textBeforeHone
+    : (DOM.textarea ? DOM.textarea.value : '');
   if (!text.trim()) {
     return;
   }
@@ -1001,11 +1123,12 @@ function autoSaveEntry() {
     title:     text.split('\n')[0].substring(0, 50) || 'Untitled',
     date:      new Date().toISOString(),
     wordCount: text.split(/\s+/).filter(Boolean).length,
-    errors: AppState.errors,
-    appliedFixes: AppState.appliedFixes,
-    overallScore: AppState.overallScore,
-    summary: AppState.summary,
+    errors: inHone ? (AppState.errorsBeforeHone || []) : AppState.errors,
+    appliedFixes: inHone ? (AppState.appliedFixesBeforeHone || []) : AppState.appliedFixes,
+    overallScore: inHone ? AppState.overallScoreBeforeHone : AppState.overallScore,
+    summary: inHone ? (AppState.summaryBeforeHone || '') : AppState.summary,
     rewriteSentences: AppState.rewriteSentences,
+    rewriteOriginalText: AppState.rewriteOriginalText,
     honedText: AppState.honedText,
     honeImprovements: AppState.honeImprovements
   };
@@ -1524,14 +1647,8 @@ function setLoading(operation) {
     }
   }
 
-  // Disable/enable all action buttons
+  // Disable/enable all action buttons based on state
   updateButtonStates();
-
-  // Add loading class to the active button
-  const buttons = [DOM.btnEvaluate, DOM.btnRewrite, DOM.btnHone];
-  buttons.forEach((btn) => {
-    if (btn) btn.disabled = AppState.isLoading;
-  });
 
   // Synchronize Mary-Beth avatar pose with the active operation
   if (operation) {
@@ -1641,6 +1758,7 @@ function saveActiveSession() {
     historySidebarOpen: AppState.historySidebarOpen,
     inRewriteMode: AppState.inRewriteMode,
     rewriteSentences: AppState.rewriteSentences,
+    rewriteOriginalText: AppState.rewriteOriginalText,
     activeRewriteIndex: AppState.activeRewriteIndex,
     inHoneMode: AppState.inHoneMode,
     honedText: AppState.honedText,
@@ -1670,10 +1788,14 @@ function restoreActiveSession() {
     AppState.historySidebarOpen = session.historySidebarOpen || false;
     AppState.inRewriteMode = session.inRewriteMode || false;
     AppState.rewriteSentences = session.rewriteSentences || [];
+    AppState.rewriteOriginalText = session.rewriteOriginalText || null;
     AppState.activeRewriteIndex = session.activeRewriteIndex ?? null;
     AppState.inHoneMode = session.inHoneMode || false;
     AppState.honedText = session.honedText ?? null;
     AppState.honeImprovements = session.honeImprovements || [];
+    AppState.evaluatedOnce = (AppState.overallScore !== null || AppState.errors.length > 0);
+    AppState.rewrittenOnce = (AppState.rewriteSentences && AppState.rewriteSentences.length > 0);
+    AppState.honedOnce = (AppState.honedText !== null && AppState.honeImprovements.length > 0);
 
     // Render components
     updateCounts();
@@ -1833,7 +1955,7 @@ function setupEventListeners() {
       exitRewriteMode();
     }
     if (AppState.inHoneMode) {
-      exitHoneMode();
+      exitHoneMode(false);
     }
     AppState.rewriteSentences = [];
     AppState.honedText = null;
@@ -2222,7 +2344,7 @@ function setupLongPress(btnEl, clickCallback, longPressCallback) {
 
 const MARYBETH_POSES = {
   'idle-reading': 'assets/marybeth/idle-reading.png',
-  'evaluate':     'assets/marybeth/evaluate.png',
+  'evaluate':     'assets/marybeth/idle-reading.png',
   'rewrite':      'assets/marybeth/rewrite.png',
   'hone':         'assets/marybeth/hone.png',
   'apply-fix':    'assets/marybeth/apply-fix.png',

@@ -162,8 +162,8 @@ def rewrite_sentence(req: RewriteRequest) -> dict:
     if isinstance(raw_results, list):
         sentences = [
             {
-                "original": item.get("original", ""),
-                "rewritten": item.get("rewritten", ""),
+                "original": (item.get("original") or "").strip(),
+                "rewritten": (item.get("rewritten") or "").strip(),
                 "explanation": item.get("explanation", "Improved sentence structure and clarity.")
             }
             for item in raw_results

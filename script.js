@@ -705,7 +705,6 @@ function renderRewrite(rewrites, isHone = false) {
         saveStory();
     };
     rewriteLayer.appendChild(closeBtn);
-    rewriteLayer.appendChild(document.createElement('br'));
 
     // Collect play buttons for background pre-generation scheduling
     const bgItems = [];

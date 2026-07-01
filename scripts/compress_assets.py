@@ -1,7 +1,7 @@
 import os
 from PIL import Image
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MARYBETH_DIR = os.path.join(BASE_DIR, "frontend", "assets", "marybeth")
 ASSETS_DIR = os.path.join(BASE_DIR, "frontend", "assets")
 

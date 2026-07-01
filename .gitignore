@@ -20,6 +20,7 @@ launch.log
 Thumbs.db
 
 # Screenshots and temporary docs
+screenshots/
 shot_*
 plan.md
 agy.md

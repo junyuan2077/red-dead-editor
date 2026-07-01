@@ -269,13 +269,17 @@ async def text_to_speech(req: TTSRequest) -> StreamingResponse:
 # Screenshot Browser API Endpoints
 # ---------------------------------------------------------------------------
 
+SCREENSHOTS_DIR = os.path.join(BASE_DIR, "screenshots")
+os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+
+
 @app.get("/api/screenshots")
 def list_screenshots() -> list[dict]:
-    """List screenshots in the root directory, sorted by modification time descending."""
+    """List screenshots in the screenshots directory, sorted by modification time descending."""
     screenshots = []
-    # search BASE_DIR for image files
-    for filename in os.listdir(BASE_DIR):
-        file_path = os.path.join(BASE_DIR, filename)
+    # search SCREENSHOTS_DIR for image files
+    for filename in os.listdir(SCREENSHOTS_DIR):
+        file_path = os.path.join(SCREENSHOTS_DIR, filename)
         if os.path.isfile(file_path):
             ext = os.path.splitext(filename)[1].lower()
             if ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"):
@@ -296,7 +300,7 @@ def list_screenshots() -> list[dict]:
 def get_screenshot(filename: str) -> FileResponse:
     """Serve a screenshot file securely, avoiding path traversal."""
     clean_filename = os.path.basename(filename)
-    file_path = os.path.join(BASE_DIR, clean_filename)
+    file_path = os.path.join(SCREENSHOTS_DIR, clean_filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     
@@ -317,7 +321,7 @@ def delete_screenshot(filename: str) -> dict:
             detail="Only screenshots (files starting with 'shot_') can be deleted to prevent asset corruption."
         )
         
-    file_path = os.path.join(BASE_DIR, clean_filename)
+    file_path = os.path.join(SCREENSHOTS_DIR, clean_filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File not found")
         

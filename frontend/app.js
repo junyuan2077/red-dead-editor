@@ -461,7 +461,7 @@ async function evaluate(force = false) {
   const isSwitchingBack = (AppState.inRewriteMode || AppState.inHoneMode);
 
   if (AppState.inRewriteMode) {
-    exitRewriteMode();
+    exitRewriteMode(false);
   }
   if (AppState.inHoneMode) {
     exitHoneMode(true);
@@ -506,6 +506,8 @@ async function evaluate(force = false) {
     AppState.rewriteSentences = [];
     AppState.honedText = null;
     AppState.honeImprovements = [];
+    AppState.rewrittenOnce = false;
+    AppState.honedOnce = false;
 
     // Render highlights on the overlay
     renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
@@ -664,7 +666,9 @@ function exitRewriteMode() {
   renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
 
   // Focus textarea
-  DOM.textarea?.focus();
+  if (focusTextarea) {
+    DOM.textarea?.focus();
+  }
 
   // Update button states
   updateButtonStates();
@@ -677,7 +681,7 @@ function exitRewriteMode() {
 async function hone(force = false) {
   // If clicking Hone while in Rewrite view:
   if (AppState.inRewriteMode) {
-    exitRewriteMode();
+    exitRewriteMode(false);
     await hone(false);
     return;
   }
@@ -695,9 +699,10 @@ async function hone(force = false) {
   // If not in hone mode, but we have cached honed results, and we are not forcing, display them!
   if (!force && AppState.honedText) {
     AppState.inHoneMode = true;
+    AppState.honedOnce = true;
     if (DOM.textarea) DOM.textarea.readOnly = true;
     if (AppState.inRewriteMode) {
-      exitRewriteMode();
+      exitRewriteMode(false);
     }
     AppState.textBeforeHone = DOM.textarea.value;
     AppState.errorsBeforeHone = [...AppState.errors];
@@ -1175,7 +1180,7 @@ function loadEntry(id) {
   AppState.honeImprovements = entry.honeImprovements || [];
   AppState.evaluatedOnce = (AppState.overallScore !== null || AppState.errors.length > 0);
   AppState.rewrittenOnce = (AppState.rewriteSentences && AppState.rewriteSentences.length > 0);
-  AppState.honedOnce = (AppState.honedText !== null && AppState.honeImprovements.length > 0);
+  AppState.honedOnce = (AppState.honedText !== null);
 
   renderHighlights(entry.text || '', AppState.errors, AppState.appliedFixes);
   renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
@@ -2031,7 +2036,12 @@ function saveActiveSession() {
     activeRewriteIndex: AppState.activeRewriteIndex,
     inHoneMode: AppState.inHoneMode,
     honedText: AppState.honedText,
-    honeImprovements: AppState.honeImprovements
+    honeImprovements: AppState.honeImprovements,
+    textBeforeHone: AppState.textBeforeHone,
+    errorsBeforeHone: AppState.errorsBeforeHone,
+    appliedFixesBeforeHone: AppState.appliedFixesBeforeHone,
+    overallScoreBeforeHone: AppState.overallScoreBeforeHone,
+    summaryBeforeHone: AppState.summaryBeforeHone
   };
   localStorage.setItem('rde_active_session', JSON.stringify(session));
 }
@@ -2062,9 +2072,14 @@ function restoreActiveSession() {
     AppState.inHoneMode = session.inHoneMode || false;
     AppState.honedText = session.honedText ?? null;
     AppState.honeImprovements = session.honeImprovements || [];
+    AppState.textBeforeHone = session.textBeforeHone ?? null;
+    AppState.errorsBeforeHone = session.errorsBeforeHone || [];
+    AppState.appliedFixesBeforeHone = session.appliedFixesBeforeHone || [];
+    AppState.overallScoreBeforeHone = session.overallScoreBeforeHone ?? null;
+    AppState.summaryBeforeHone = session.summaryBeforeHone || '';
     AppState.evaluatedOnce = (AppState.overallScore !== null || AppState.errors.length > 0);
     AppState.rewrittenOnce = (AppState.rewriteSentences && AppState.rewriteSentences.length > 0);
-    AppState.honedOnce = (AppState.honedText !== null && AppState.honeImprovements.length > 0);
+    AppState.honedOnce = (AppState.honedText !== null);
 
     // Render components
     updateCounts();
@@ -2151,48 +2166,78 @@ function showMobilePopover(markEl) {
   document.body.appendChild(popover);
 
   // --- Position using viewport coordinates ---
-  const markRect = markEl.getBoundingClientRect();
   const popoverWidth = popover.offsetWidth || 290;
   const popoverHeight = popover.offsetHeight || 200;
-  const viewportW = window.innerWidth;
-  const viewportH = window.innerHeight;
 
-  // Horizontal: center on the mark, clamped to viewport
-  let left = markRect.left + (markRect.width - popoverWidth) / 2;
-  left = Math.max(12, Math.min(left, viewportW - popoverWidth - 12));
+  const updatePopoverPosition = () => {
+    const r = markEl.getBoundingClientRect();
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
 
-  // Vertical: prefer above the mark; fall below if not enough room
-  let top;
-  let placeBelow = false;
-  const spaceAbove = markRect.top;
-  const spaceBelow = viewportH - markRect.bottom;
+    const headerEl = document.querySelector('.app-header');
+    const footerEl = document.querySelector('.journal-footer');
+    const headerBottom = headerEl ? headerEl.getBoundingClientRect().bottom : 0;
+    const footerTop = footerEl ? footerEl.getBoundingClientRect().top : viewportH;
 
-  if (spaceAbove >= popoverHeight + 12) {
-    // Enough room above
-    top = markRect.top - popoverHeight - 10;
-  } else if (spaceBelow >= popoverHeight + 12) {
-    // Place below
-    top = markRect.bottom + 10;
-    placeBelow = true;
-    popover.classList.add('popover-below');
-  } else {
-    // Neither side has enough room — place below and cap height
-    top = markRect.bottom + 10;
-    const maxH = viewportH - top - 16;
-    popover.style.maxHeight = `${maxH}px`;
-    popover.style.overflowY = 'auto';
-    placeBelow = true;
-    popover.classList.add('popover-below');
-  }
+    // Horizontal: center on the mark, clamped to viewport
+    const markCenter = r.left + r.width / 2;
+    let newLeft = markCenter - popoverWidth / 2;
+    newLeft = Math.max(12, Math.min(newLeft, viewportW - popoverWidth - 12));
+    popover.style.left = `${newLeft}px`;
 
-  popover.style.left = `${left}px`;
-  popover.style.top  = `${top}px`;
+    // Arrow positioning
+    let arrowLeft = markCenter - newLeft;
+    // Clamp arrow so it doesn't go outside the popover's border radius
+    arrowLeft = Math.max(16, Math.min(arrowLeft, popoverWidth - 16));
+    popover.style.setProperty('--arrow-left', `${arrowLeft}px`);
+
+    // Vertical: prefer above the mark; fall below if not enough room
+    const margin = 10;
+    const spaceAbove = r.top - headerBottom;
+    const spaceBelow = footerTop - r.bottom;
+
+    let newTop;
+    let placeBelow = false;
+
+    if (spaceAbove >= popoverHeight + margin) {
+      newTop = r.top - popoverHeight - margin;
+      popover.style.maxHeight = '';
+      popover.style.overflowY = '';
+    } else if (spaceBelow >= popoverHeight + margin) {
+      newTop = r.bottom + margin;
+      placeBelow = true;
+      popover.style.maxHeight = '';
+      popover.style.overflowY = '';
+    } else {
+      if (spaceAbove > spaceBelow) {
+        newTop = headerBottom + margin;
+        popover.style.maxHeight = `${Math.max(0, spaceAbove - margin * 2)}px`;
+      } else {
+        newTop = r.bottom + margin;
+        popover.style.maxHeight = `${Math.max(0, spaceBelow - margin * 2)}px`;
+        placeBelow = true;
+      }
+      popover.style.overflowY = 'auto';
+    }
+
+    popover.style.top = `${newTop}px`;
+
+    if (placeBelow) {
+      popover.classList.add('popover-below');
+    } else {
+      popover.classList.remove('popover-below');
+    }
+    
+    return placeBelow;
+  };
+
+  const initialPlaceBelow = updatePopoverPosition();
 
   // Scroll to bring the mark and popover into a clear view with adaptive scroll alignment
   if (DOM.textarea) {
     const containerHeight = DOM.textarea.clientHeight;
     let targetScrollTop;
-    if (placeBelow) {
+    if (initialPlaceBelow) {
       // Popover is below. Keep mark near the top (e.g. 15% from top) so there's maximum room below
       targetScrollTop = markEl.offsetTop - (containerHeight * 0.15);
     } else {
@@ -2207,15 +2252,7 @@ function showMobilePopover(markEl) {
 
   // Reposition on scroll so the popover tracks the mark
   const repositionHandler = () => {
-    const r = markEl.getBoundingClientRect();
-    let newLeft = r.left + (r.width - popoverWidth) / 2;
-    newLeft = Math.max(12, Math.min(newLeft, viewportW - popoverWidth - 12));
-    popover.style.left = `${newLeft}px`;
-    if (placeBelow) {
-      popover.style.top = `${r.bottom + 10}px`;
-    } else {
-      popover.style.top = `${r.top - popover.offsetHeight - 10}px`;
-    }
+    updatePopoverPosition();
   };
   DOM.textarea?.addEventListener('scroll', repositionHandler);
   popover._repositionHandler = repositionHandler;
@@ -2268,7 +2305,7 @@ function setupEventListeners() {
   // --- Textarea events ---
   DOM.textarea?.addEventListener('input', () => {
     if (AppState.inRewriteMode) {
-      exitRewriteMode();
+      exitRewriteMode(false);
     }
     if (AppState.inHoneMode) {
       exitHoneMode(false);
@@ -2280,6 +2317,11 @@ function setupEventListeners() {
     AppState.appliedFixes = [];
     AppState.overallScore = null;
     AppState.summary = '';
+    
+    // Clear generation/evaluation flags since the text changed
+    AppState.evaluatedOnce = false;
+    AppState.rewrittenOnce = false;
+    AppState.honedOnce = false;
     
     updateCounts();
     renderHighlights(DOM.textarea.value, [], []);
@@ -2655,6 +2697,11 @@ function setupLongPress(btnEl, clickCallback, longPressCallback) {
     }
     if (!isLongPress) {
       btnEl.style.setProperty('--hold-progress', '0');
+      if (e.type === 'touchend') {
+        // Prevent ghost clicks and unwanted focus shifts (like the keyboard popping up) on mobile
+        e.preventDefault();
+        clickCallback(e);
+      }
       currentEvent = null;
     }
   };
@@ -2668,8 +2715,9 @@ function setupLongPress(btnEl, clickCallback, longPressCallback) {
   btnEl.addEventListener('touchcancel', endPress);
   
   btnEl.addEventListener('click', (e) => {
+    // If it was a long press, or if touchend already handled it, don't do anything
+    e.preventDefault();
     if (isLongPress) {
-      e.preventDefault();
       e.stopPropagation();
       isLongPress = false;
       return;

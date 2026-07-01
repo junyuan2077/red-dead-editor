@@ -1570,6 +1570,10 @@ body::after {
   pointer-events: auto; /* enable interactions inside popover */
 }
 
+.mobile-popover > * {
+  flex-shrink: 0;
+}
+
 @keyframes popoverIn {
   from {
     opacity: 0;
@@ -1585,7 +1589,7 @@ body::after {
   content: '';
   position: absolute;
   bottom: -6px;
-  left: 50%;
+  left: var(--arrow-left, 50%);
   transform: translateX(-50%);
   border-width: 6px 6px 0;
   border-style: solid;

@@ -2118,7 +2118,9 @@ function restoreActiveSession() {
 }
 
 /**
- * Show a floating popover directly above the tapped error highlight on mobile.
+ * Show a floating popover card for the tapped error highlight on mobile.
+ * Uses position:fixed on document.body so it is never clipped by
+ * .journal-container's overflow:hidden.
  */
 function showMobilePopover(markEl) {
   removeMobilePopover();
@@ -2145,37 +2147,78 @@ function showMobilePopover(markEl) {
     <button class="btn btn-apply-fix" data-popover-fix-index="${errorIndex}">Apply Fix</button>
   `;
 
-  // Append popover to highlight layer so it scrolls with the text
-  DOM.highlightLayer?.appendChild(popover);
+  // Append to document.body so it escapes all overflow:hidden ancestors
+  document.body.appendChild(popover);
 
-  // Measure popover dimensions
-  const popoverWidth = popover.offsetWidth || 280;
-  const popoverHeight = popover.offsetHeight || 170;
+  // --- Position using viewport coordinates ---
+  const markRect = markEl.getBoundingClientRect();
+  const popoverWidth = popover.offsetWidth || 290;
+  const popoverHeight = popover.offsetHeight || 200;
+  const viewportW = window.innerWidth;
+  const viewportH = window.innerHeight;
 
-  // Position it horizontally centered relative to the mark
-  let left = markEl.offsetLeft + (markEl.offsetWidth - popoverWidth) / 2;
-  // Prevent overflow outside the highlight layer boundaries
-  const maxLeft = DOM.highlightLayer.clientWidth - popoverWidth - 16;
-  left = Math.max(16, Math.min(left, maxLeft));
+  // Horizontal: center on the mark, clamped to viewport
+  let left = markRect.left + (markRect.width - popoverWidth) / 2;
+  left = Math.max(12, Math.min(left, viewportW - popoverWidth - 12));
 
-  // Adaptive vertical placement: place below if it overflows the top of the scroll container
-  let top = markEl.offsetTop - popoverHeight - 12;
-  const scrollTop = DOM.highlightLayer.scrollTop || 0;
+  // Vertical: prefer above the mark; fall below if not enough room
+  let top;
+  let placeBelow = false;
+  const spaceAbove = markRect.top;
+  const spaceBelow = viewportH - markRect.bottom;
 
-  if (top < scrollTop) {
-    top = markEl.offsetTop + markEl.offsetHeight + 12;
+  if (spaceAbove >= popoverHeight + 12) {
+    // Enough room above
+    top = markRect.top - popoverHeight - 10;
+  } else if (spaceBelow >= popoverHeight + 12) {
+    // Place below
+    top = markRect.bottom + 10;
+    placeBelow = true;
+    popover.classList.add('popover-below');
+  } else {
+    // Neither side has enough room — place below and cap height
+    top = markRect.bottom + 10;
+    const maxH = viewportH - top - 16;
+    popover.style.maxHeight = `${maxH}px`;
+    popover.style.overflowY = 'auto';
+    placeBelow = true;
     popover.classList.add('popover-below');
   }
 
   popover.style.left = `${left}px`;
-  popover.style.top = `${top}px`;
+  popover.style.top  = `${top}px`;
 
-  // Scroll to bring the mark and popover into a clear view
+  // Scroll to bring the mark and popover into a clear view with adaptive scroll alignment
   if (DOM.textarea) {
     const containerHeight = DOM.textarea.clientHeight;
-    const targetScrollTop = Math.max(0, markEl.offsetTop - containerHeight / 3);
-    DOM.textarea.scrollTop = targetScrollTop;
+    let targetScrollTop;
+    if (placeBelow) {
+      // Popover is below. Keep mark near the top (e.g. 15% from top) so there's maximum room below
+      targetScrollTop = markEl.offsetTop - (containerHeight * 0.15);
+    } else {
+      // Popover is above. Keep mark near the bottom (e.g. 70% from top) so there's maximum room above
+      targetScrollTop = markEl.offsetTop - (containerHeight * 0.70);
+    }
+    DOM.textarea.scrollTo({
+      top: Math.max(0, targetScrollTop),
+      behavior: 'smooth'
+    });
   }
+
+  // Reposition on scroll so the popover tracks the mark
+  const repositionHandler = () => {
+    const r = markEl.getBoundingClientRect();
+    let newLeft = r.left + (r.width - popoverWidth) / 2;
+    newLeft = Math.max(12, Math.min(newLeft, viewportW - popoverWidth - 12));
+    popover.style.left = `${newLeft}px`;
+    if (placeBelow) {
+      popover.style.top = `${r.bottom + 10}px`;
+    } else {
+      popover.style.top = `${r.top - popover.offsetHeight - 10}px`;
+    }
+  };
+  DOM.textarea?.addEventListener('scroll', repositionHandler);
+  popover._repositionHandler = repositionHandler;
 
   // Bind close button click
   popover.querySelector('.popover-close-btn').addEventListener('click', (e) => {
@@ -2195,8 +2238,12 @@ function showMobilePopover(markEl) {
  * Remove the mobile floating popover if it exists.
  */
 function removeMobilePopover() {
-  const popover = DOM.highlightLayer?.querySelector('.mobile-popover');
+  const popover = document.body.querySelector('.mobile-popover');
   if (popover) {
+    // Clean up scroll reposition listener
+    if (popover._repositionHandler) {
+      DOM.textarea?.removeEventListener('scroll', popover._repositionHandler);
+    }
     popover.remove();
   }
   DOM.textarea?.classList.remove('has-popover');
@@ -2212,7 +2259,7 @@ function setupEventListeners() {
 
   // Dismiss mobile popover when clicking outside
   document.addEventListener('click', (e) => {
-    const popover = DOM.highlightLayer?.querySelector('.mobile-popover');
+    const popover = document.body.querySelector('.mobile-popover');
     if (popover && !popover.contains(e.target) && !e.target.closest('mark[data-error-index]')) {
       removeMobilePopover();
     }

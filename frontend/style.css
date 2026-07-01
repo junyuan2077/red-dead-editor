@@ -1115,13 +1115,15 @@ body::after {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #fff;
-  background: var(--red-deep);
+  background-color: var(--red-deep);
+  background-image: url('assets/texturedRed.png');
+  background-repeat: repeat;
   border-radius: var(--radius-sm);
-  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .btn-apply-fix:hover {
-  background: var(--red-bright);
+  background-color: var(--red-bright);
   box-shadow: 0 0 12px rgba(198, 40, 40, 0.3);
 }
 
@@ -1550,9 +1552,10 @@ body::after {
 }
 
 .mobile-popover {
-  position: absolute;
-  z-index: 100;
+  position: fixed;
+  z-index: 10000;
   width: 290px;
+  max-width: calc(100vw - 24px);
   background: rgba(30, 22, 20, 0.98);
   border: 1px solid var(--gold);
   border-radius: var(--radius-md);

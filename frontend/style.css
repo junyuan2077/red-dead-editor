@@ -120,6 +120,7 @@ body {
   color: var(--text-light);
   overflow: hidden;           /* Prevent body scroll; layout handles it */
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
 }
 
@@ -253,6 +254,52 @@ body::after {
   margin-top: 3px;
 }
 
+/* Gallery link button in Header */
+.gallery-header-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 16px;
+  background: rgba(199, 164, 74, 0.08);
+  border: 1px solid rgba(199, 164, 74, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--gold);
+  text-decoration: none;
+  font-family: 'RedDeadText', 'Lora', serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: all var(--transition-fast);
+  cursor: pointer;
+  z-index: 102;
+}
+
+.gallery-header-btn:hover {
+  background: rgba(199, 164, 74, 0.18);
+  border-color: var(--gold);
+  color: var(--gold-light);
+  box-shadow: 0 0 12px rgba(199, 164, 74, 0.2);
+}
+
+.gallery-btn-icon {
+  transition: transform var(--transition-fast);
+}
+
+.gallery-header-btn:hover .gallery-btn-icon {
+  transform: scale(1.1);
+}
+
+@media (max-width: 768px) {
+  .gallery-header-btn {
+    position: absolute;
+    right: 70px;
+    padding: var(--space-sm);
+  }
+  .gallery-header-btn span {
+    display: none;
+  }
+}
+
 /* Sidebar toggle buttons — hidden on desktop, shown on mobile */
 .sidebar-toggle {
   display: none;  /* Hidden on desktop */
@@ -327,6 +374,7 @@ body::after {
   display: grid;
   grid-template-columns: var(--sidebar-width-left) 1fr var(--sidebar-width-right);
   height: calc(100vh - var(--header-height));
+  height: calc(100dvh - var(--header-height));
   margin-top: var(--header-height);
   overflow: hidden;
 }
@@ -775,6 +823,8 @@ body::after {
   color: var(--gold-light);
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  text-align: center;
+  padding: 0 var(--space-lg);
   animation: pulse 2s ease-in-out infinite;
 }
 
@@ -1278,6 +1328,12 @@ body::after {
    -------------------------------------------------------------------------- */
 
 @media (max-width: 1024px) {
+  body {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+  }
+
   .sidebar-backdrop {
     display: block;
   }
@@ -1435,9 +1491,18 @@ body::after {
     display: none;   /* Hide subtitle on very small screens */
   }
 
-  /* Hide button labels, show only icons on tiny screens to keep horizontal layout */
+  /* Style buttons gracefully on tiny screens (icon on top, text below) */
+  .journal-footer .btn {
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px var(--space-xs);
+    min-height: 48px;
+  }
+
   .btn-label {
-    display: none;
+    display: inline-block;
+    font-size: 0.62rem;
+    letter-spacing: 0.04em;
   }
 
   .btn-icon {
@@ -1445,8 +1510,8 @@ body::after {
   }
 
   .btn-icon svg {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
   }
 
   .sidebar {
@@ -1461,7 +1526,7 @@ body::after {
   /* Even smaller editor text */
   .highlight-layer,
   .editor-textarea {
-    font-size: 15px;
+    font-size: 16px;
     padding: var(--space-sm) var(--space-md);
     padding-top: 18px;
   }

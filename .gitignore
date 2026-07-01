@@ -18,3 +18,9 @@ launch.log
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Screenshots and temporary docs
+shot_*
+plan.md
+agy.md
+diff.txt

@@ -265,6 +265,68 @@ async def text_to_speech(req: TTSRequest) -> StreamingResponse:
             status_code=exc.response.status_code,
             detail=f"TTS service error: {exc.response.text[:500]}",
         )
+# ---------------------------------------------------------------------------
+# Screenshot Browser API Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/screenshots")
+def list_screenshots() -> list[dict]:
+    """List screenshots in the root directory, sorted by modification time descending."""
+    screenshots = []
+    # search BASE_DIR for image files
+    for filename in os.listdir(BASE_DIR):
+        file_path = os.path.join(BASE_DIR, filename)
+        if os.path.isfile(file_path):
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"):
+                stat = os.stat(file_path)
+                screenshots.append({
+                    "filename": filename,
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime,
+                    "url": f"/api/screenshots/{filename}",
+                    "is_screenshot": filename.startswith("shot_")
+                })
+    # Sort by mtime descending
+    screenshots.sort(key=lambda x: x["mtime"], reverse=True)
+    return screenshots
+
+
+@app.get("/api/screenshots/{filename}")
+def get_screenshot(filename: str) -> FileResponse:
+    """Serve a screenshot file securely, avoiding path traversal."""
+    clean_filename = os.path.basename(filename)
+    file_path = os.path.join(BASE_DIR, clean_filename)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    ext = os.path.splitext(clean_filename)[1].lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"):
+        raise HTTPException(status_code=403, detail="File type not allowed")
+        
+    return FileResponse(file_path)
+
+
+@app.delete("/api/screenshots/{filename}")
+def delete_screenshot(filename: str) -> dict:
+    """Delete a screenshot file securely (only allows deleting files starting with shot_)."""
+    clean_filename = os.path.basename(filename)
+    if not clean_filename.startswith("shot_"):
+        raise HTTPException(
+            status_code=403, 
+            detail="Only screenshots (files starting with 'shot_') can be deleted to prevent asset corruption."
+        )
+        
+    file_path = os.path.join(BASE_DIR, clean_filename)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    try:
+        os.remove(file_path)
+        return {"status": "success", "message": f"Deleted {clean_filename}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ---------------------------------------------------------------------------
 # Static frontend — MUST be mounted AFTER all /api routes so it doesn't

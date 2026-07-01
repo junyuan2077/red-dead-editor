@@ -399,11 +399,6 @@ function activateRewriteBlock(idx, focusRewritten = false) {
   });
 
   renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
-  
-  // Auto-open corrections sidebar on mobile
-  if (window.innerWidth <= 1024) {
-    openCorrectionsSidebar();
-  }
 }
 
 /* --------------------------------------------------------------------------
@@ -517,11 +512,6 @@ async function evaluate(force = false) {
 
     // Render corrections sidebar
     renderCorrections(AppState.errors, AppState.overallScore, AppState.summary, true);
-
-    // On mobile, auto-open corrections sidebar
-    if (window.innerWidth <= 1024) {
-      openCorrectionsSidebar();
-    }
 
     // Toast feedback
     if (AppState.overallScore !== null) {
@@ -776,11 +766,6 @@ async function hone(force = false) {
 
     // Show improvements
     renderHoneResults(AppState.honeImprovements);
-
-    // On mobile, show corrections
-    if (window.innerWidth <= 1024) {
-      openCorrectionsSidebar();
-    }
 
     showToast('Your writing has been polished.', 'success');
     saveActiveSession();
@@ -1110,7 +1095,20 @@ function generateId() {
  */
 function getEntries() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw && !localStorage.getItem('rde_seeded_diary')) {
+      const defaultEntry = {
+        id: 'seed_crush_diary',
+        title: 'June 28, Sunday. Weather: Sunny day (晴天)',
+        text: 'Dear Diary,\n\nToday is very very hot, but my heart is hotter because of Li Ming. He is my desk-mate, and he is the most handsom boy in our Grade 7 class. His eyes are like two big black grapes in the sweet grape soup, so shiny and bright. When he look at me, my heart is playing deer-jumping, bump-bump-bump, it want to fly out of my neck! I think he is the bright sun, and I am only a small grass who cannot breathe.\n\nIn the afternoon, we have a basketbal match. Li Ming is very good at play basketbal. When he shoot the ball, all the girls screem so loud. I also want to screem, but I am too cow to do that, so I only screem in my heart. He ran very fast, and his sweat is shining like diamonds. He is so cool, really cool, super cool!\n\nAfter school, I saw him walking home. I want to ride bycicle with him, and watch the sunset together. Just like Jay Chou sings in his famous song \'Simple Love\' (简单爱): \'I want to hold your hand like this and not let go, can I simple simple love you?\' But my English is so bad, I cannot tell him. If I talk to him, my face will become very red like a big tomato.\n\nI must good good study, day day up, so that he can notice me. Tomorow, I will try to say \'Hello\' to him first. Wish me good luck, dear diary!',
+        date: new Date().toISOString(),
+        wordCount: 260
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([defaultEntry]));
+      localStorage.setItem('rde_seeded_diary', 'true');
+      return [defaultEntry];
+    }
+    return JSON.parse(raw || '[]');
   } catch {
     return [];
   }
@@ -1260,7 +1258,7 @@ function startRenameEntry(id, titleSpan) {
   input.style.border = '1px solid var(--gold)';
   input.style.color = 'var(--parchment)';
   input.style.fontFamily = 'inherit';
-  input.style.fontSize = 'inherit';
+  input.style.fontSize = '16px';
   input.style.padding = '2px 6px';
   input.style.borderRadius = 'var(--radius-sm)';
   input.style.outline = 'none';
@@ -1452,7 +1450,7 @@ function renderCorrections(errors, score, summary, triggerStagger = false) {
   DOM.correctionsList.innerHTML = errors
     .map((err, i) => {
       const typeName  = capitalize(err.type || 'grammar');
-      const typeClass = `error-${err.type || 'grammar'}`;
+      const typeClass = `error-${(err.type || 'grammar').toLowerCase()}`;
       
       const isRestored = AppState.lastRestoredError && 
                          AppState.lastRestoredError.start === err.start && 
@@ -1556,7 +1554,7 @@ function renderSingleCorrectionCard(err, index) {
   }
 
   const typeName  = capitalize(err.type || 'grammar');
-  const typeClass = `error-${err.type || 'grammar'}`;
+  const typeClass = `error-${(err.type || 'grammar').toLowerCase()}`;
 
   DOM.correctionsList.innerHTML = `
     <div class="correction-card" data-error-index="${index}">
@@ -2130,7 +2128,7 @@ function showMobilePopover(markEl) {
   if (!err) return;
 
   const typeName  = capitalize(err.type || 'grammar');
-  const typeClass = `error-${err.type || 'grammar'}`;
+  const typeClass = `error-${(err.type || 'grammar').toLowerCase()}`;
 
   // Add has-popover class to allow scrolling past bottom
   DOM.textarea?.classList.add('has-popover');
@@ -2264,6 +2262,14 @@ function setupEventListeners() {
   // Track text selection for the Rewrite feature (not strictly needed for full-rewrite but kept for compatibility)
   DOM.textarea?.addEventListener('mouseup', trackSelection);
   DOM.textarea?.addEventListener('keyup', trackSelection);
+
+  // Prevent iOS / mobile viewport scroll shifts when focusing/blurring editor
+  DOM.textarea?.addEventListener('focus', () => {
+    window.scrollTo(0, 0);
+  });
+  DOM.textarea?.addEventListener('blur', () => {
+    window.scrollTo(0, 0);
+  });
 
   // --- Action buttons (Evaluate, Rewrite, Hone with Long-Press support) ---
   if (DOM.btnEvaluate) {
@@ -2630,11 +2636,11 @@ function setupLongPress(btnEl, clickCallback, longPressCallback) {
    -------------------------------------------------------------------------- */
 
 const MARYBETH_POSES = {
-  'idle-reading': 'assets/marybeth/idle-reading.png',
-  'evaluate':     'assets/marybeth/idle-reading.png',
-  'rewrite':      'assets/marybeth/rewrite.png',
-  'hone':         'assets/marybeth/hone.png',
-  'apply-fix':    'assets/marybeth/apply-fix.png',
+  'idle-reading': 'assets/marybeth/idle-reading.webp',
+  'evaluate':     'assets/marybeth/evaluate.webp',
+  'rewrite':      'assets/marybeth/rewrite.webp',
+  'hone':         'assets/marybeth/hone.webp',
+  'apply-fix':    'assets/marybeth/apply-fix.webp',
 };
 
 let _maryBethPoseTimer = null;

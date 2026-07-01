@@ -9,15 +9,17 @@
 
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤠</text></svg>">
+  <link rel="apple-touch-icon" href="assets/marybeth_app_icon.png">
+  <link rel="icon" type="image/png" href="assets/marybeth_app_icon.png">
 
   <!-- Preload critical fonts for faster rendering -->
   <link rel="preload" href="assets/red.woff" as="font" type="font/woff" crossorigin>
   <link rel="preload" href="assets/redT.woff" as="font" type="font/woff" crossorigin>
 
-  <!-- Google Fonts — Lora for that literary, old-world serif feel -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap" rel="stylesheet">
+  <!-- Google Fonts — Lora for that literary, old-world serif feel (using loli.net mirror for China IP compatibility) -->
+  <link rel="preconnect" href="https://fonts.loli.net">
+  <link rel="preconnect" href="https://gstatic.loli.net" crossorigin>
+  <link href="https://fonts.loli.net/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="style.css">
 </head>
@@ -42,6 +44,14 @@
       <p class="header-subtitle">English Writing Practice · Est. 1899</p>
     </div>
 
+    <!-- Gallery / Captures Link -->
+    <a href="/viewer.html" target="_blank" class="gallery-header-btn" title="View Screenshots / Photo Album">
+      <svg class="gallery-btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg>
+      <span>Captures</span>
+    </a>
 
     <!-- Right toggle: opens corrections sidebar on mobile -->
     <button class="sidebar-toggle corrections-toggle" id="corrections-toggle-btn" aria-label="Toggle corrections panel">

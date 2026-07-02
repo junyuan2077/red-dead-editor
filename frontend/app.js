@@ -23,6 +23,8 @@ const API_BASE      = '';                // Base URL for API calls (empty = same
 const TOAST_DURATION = 3000;             // Toast auto-dismiss in milliseconds
 const STORAGE_KEY   = 'rdo_entries';     // LocalStorage key for journal entries
 
+const DEFAULT_ENTRY_TEXT = 'Dear Diary,\nI think about him constantly. His presence always inflicts a warm, comforting feeling in my chest. Yesterday, we walked home together and he says something funny that made me blush. Every one of his small gestures make me forget my own name. I hope this puppy love is not unrequitted, although I am too shy to ask. I wish I could tell him how I feel, but in my personal opinion, I think he might already know. His charm is completely irresistable. Even when he is just reading a book, he looks so handsome. Maybe tomorrow I will find the courage to talk to him more, rather than just staring from afar like a secret admirer.';
+
 /* --------------------------------------------------------------------------
    2. APPLICATION STATE
    Single source of truth for the entire UI state.
@@ -1100,17 +1102,47 @@ function generateId() {
  */
 function getEntries() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw && !localStorage.getItem('rde_seeded_diary')) {
+    let raw = localStorage.getItem(STORAGE_KEY);
+
+    // If the older seeds exist but not the v4 one, force-update to the new puppy-love text with 6 advanced mistakes
+    if (!localStorage.getItem('rde_seeded_diary_v4')) {
+      localStorage.setItem('rde_seeded_diary_v4', 'true');
+      if (raw) {
+        try {
+          let entries = JSON.parse(raw);
+          entries = entries.map(entry => {
+            if (entry.id === 'seed_crush_diary') {
+              return {
+                id: 'seed_crush_diary',
+                title: 'June 28, Sunday. Weather: Sunny day (晴天)',
+                text: DEFAULT_ENTRY_TEXT,
+                date: new Date().toISOString(),
+                wordCount: 118
+              };
+            }
+            return entry;
+          });
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+          raw = JSON.stringify(entries);
+          localStorage.removeItem('rde_active_session');
+        } catch (e) {
+          localStorage.removeItem(STORAGE_KEY);
+          localStorage.removeItem('rde_active_session');
+          raw = null;
+        }
+      }
+    }
+
+    if (!raw && !localStorage.getItem('rde_seeded_diary_v4')) {
       const defaultEntry = {
         id: 'seed_crush_diary',
         title: 'June 28, Sunday. Weather: Sunny day (晴天)',
-        text: 'Dear Diary,\n\nToday is very very hot, but my heart is hotter because of Li Ming. He is my desk-mate, and he is the most handsom boy in our Grade 7 class. His eyes are like two big black grapes in the sweet grape soup, so shiny and bright. When he look at me, my heart is playing deer-jumping, bump-bump-bump, it want to fly out of my neck! I think he is the bright sun, and I am only a small grass who cannot breathe.\n\nIn the afternoon, we have a basketbal match. Li Ming is very good at play basketbal. When he shoot the ball, all the girls screem so loud. I also want to screem, but I am too cow to do that, so I only screem in my heart. He ran very fast, and his sweat is shining like diamonds. He is so cool, really cool, super cool!\n\nAfter school, I saw him walking home. I want to ride bycicle with him, and watch the sunset together. Just like Jay Chou sings in his famous song \'Simple Love\' (简单爱): \'I want to hold your hand like this and not let go, can I simple simple love you?\' But my English is so bad, I cannot tell him. If I talk to him, my face will become very red like a big tomato.\n\nI must good good study, day day up, so that he can notice me. Tomorow, I will try to say \'Hello\' to him first. Wish me good luck, dear diary!',
+        text: DEFAULT_ENTRY_TEXT,
         date: new Date().toISOString(),
-        wordCount: 260
+        wordCount: 118
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify([defaultEntry]));
-      localStorage.setItem('rde_seeded_diary', 'true');
+      localStorage.setItem('rde_seeded_diary_v4', 'true');
       return [defaultEntry];
     }
     return JSON.parse(raw || '[]');
@@ -1219,7 +1251,9 @@ function newEntry() {
   if (AppState.inHoneMode) {
     exitHoneMode(false);
   }
-  DOM.textarea.value      = '';
+  const entries = getEntries();
+  const defaultVal = entries.length === 0 ? DEFAULT_ENTRY_TEXT : '';
+  DOM.textarea.value      = defaultVal;
   AppState.currentEntryId = null;
   AppState.errors         = [];
   AppState.appliedFixes   = [];
@@ -1233,7 +1267,7 @@ function newEntry() {
   AppState.rewrittenOnce = false;
   AppState.honedOnce = false;
 
-  renderHighlights('', [], []);
+  renderHighlights(defaultVal, [], []);
   updateCounts();
   clearCorrections();
   renderHistory();
@@ -2807,6 +2841,34 @@ function preloadMaryBethImages() {
    -------------------------------------------------------------------------- */
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Migrate existing localStorage databases and sessions to the 118-word puppy-love seed (v4)
+  if (!localStorage.getItem('rde_seeded_diary_v4')) {
+    localStorage.setItem('rde_seeded_diary_v4', 'true');
+    localStorage.removeItem('rde_active_session');
+    
+    const rawEntries = localStorage.getItem(STORAGE_KEY);
+    if (rawEntries) {
+      try {
+        let entries = JSON.parse(rawEntries);
+        entries = entries.map(entry => {
+          if (entry.id === 'seed_crush_diary') {
+            return {
+              id: 'seed_crush_diary',
+              title: 'June 28, Sunday. Weather: Sunny day (晴天)',
+              text: DEFAULT_ENTRY_TEXT,
+              date: new Date().toISOString(),
+              wordCount: 118
+            };
+          }
+          return entry;
+        });
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      } catch (e) {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+  }
+
   // Cache all DOM references
   initDOMReferences();
 
@@ -2818,11 +2880,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load the active session if present, otherwise load the most recent entry
   const restored = restoreActiveSession();
-  if (!restored) {
-    const entries = getEntries();
-    if (entries.length > 0) {
-      loadEntry(entries[0].id);
-    }
+  const entries = getEntries();
+  if (entries.length === 0) {
+    newEntry();
+  } else if (!restored) {
+    loadEntry(entries[0].id);
   }
 
   // Wire up all event listeners

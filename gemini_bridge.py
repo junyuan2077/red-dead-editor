@@ -1,32 +1,45 @@
-import subprocess
+from __future__ import annotations
+
 import json
-import re
+import logging
 import os
+import re
+from typing import Literal
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from pydantic import BaseModel
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# System Prompts
+# ---------------------------------------------------------------------------
+
 EVALUATE_SYSTEM_PROMPT = """
-You are an expert English writing assistant. 
+You are an expert English writing assistant.
 Analyze the provided text for grammatical errors, spelling mistakes, tense inconsistencies, vocabulary weaknesses (such as choosing a more accurate, context-appropriate word or phrase), and stylistic flaws.
-Return ONLY a valid JSON array of objects. Do not include any markdown formatting, preamble, or postamble.
+Return ONLY a valid JSON array of objects ordered by appearance in the text. Do not include any markdown formatting, preamble, or postamble.
 
 CRITICAL RULES FOR TEXT FRAGMENTS:
-1. NO OVERLAPPING: The text fragments defined by "offset" and "length" MUST NOT overlap. 
-2. COMBINE ERRORS: If multiple errors occur in the same phrase, share the same words, or are immediately adjacent, you MUST combine them into a single, larger correction object. For example, instead of flagging "explore , where" and "where met" separately, combine them into one "original" fragment like "explore , where met" and provide a unified "replacement".
+1. VERBATIM & NON-EMPTY: "original" MUST be a non-empty, exact verbatim substring copied from the input text (preserve exact spelling, casing, punctuation, and spacing). If a word or punctuation mark is missing, include the adjacent word(s) in "original" and provide the corrected phrase in "replacement".
+2. NO OVERLAPPING: Reported "original" fragments MUST NOT overlap.
+3. COMBINE ADJACENT ERRORS: If multiple errors occur in the same phrase, share the same words, or are immediately adjacent, you MUST combine them into a single correction object. For example, instead of flagging "explore , where" and "where met" separately, combine them into one "original" fragment like "explore , where met" and provide a unified "replacement".
+4. CONTEXT ANCHORS: Provide "context_before" (the exact 1 to 5 words immediately before "original", or "" if at the very start) and "context_after" (the exact 1 to 5 words immediately after "original", or "" if at the very end) copied verbatim from the input so each error can be located unambiguously even if the same word appears multiple times.
 
 Each object must have the following fields:
-- "original": The exact text fragment that is incorrect or could be improved.
-- "replacement": The suggested correction or more accurate word/phrase.
+- "original": The exact, non-empty verbatim text fragment that is incorrect or could be improved.
+- "replacement": The suggested correction or more accurate word/phrase (must differ from "original").
 - "type": One of "Grammar", "Spelling", "Style", or "Vocabulary". (If combined, choose the most prominent type, e.g., "Vocabulary").
 - "reason": A succinct clarification of the error or vocabulary/stylistic improvement.
-- "offset": The zero-based starting character index of the "original" text in the input.
-- "length": The length of the "original" text.
+- "context_before": Exact verbatim text (up to ~30 chars / 1-5 words) immediately preceding "original", or "" if at start.
+- "context_after": Exact verbatim text (up to ~30 chars / 1-5 words) immediately following "original", or "" if at end.
 
 If there are no errors, return an empty array [].
-"""
+""".strip()
 
 REWRITE_SYSTEM_PROMPT = """
 You are an expert English writing assistant.
@@ -39,7 +52,7 @@ Each object in the array should represent a logical sentence or phrase and must 
 - "explanation": A clear, concise explanation of why this rewrite is an improvement over the original sentence.
 
 The sequence of objects must cover the entire source text from start to finish.
-"""
+""".strip()
 
 HONE_SYSTEM_PROMPT = """
 You are a professional storyteller with a gift for cinematic, atmospheric prose.
@@ -52,119 +65,362 @@ Each object must have the following field:
 - "rewritten": The newly written, honed dramatic narrative sentence.
 
 The total combined length of all "rewritten" values must be no more than 200 words.
-"""
+""".strip()
 
-# CLI model (used by agy)
-CLI_MODEL_NAME = "claude-opus-4-6"
-# CLI_MODEL_NAME = "gemini-3.5-flash"
+# ---------------------------------------------------------------------------
+# Structured Output Schemas
+# ---------------------------------------------------------------------------
 
-# API model (used by Google GenAI SDK)
-API_MODEL_NAME = "gemini-3.5-flash"
 
-# Initialize Google AI if API key is available
+class EvaluateErrorItem(BaseModel):
+    original: str
+    replacement: str
+    type: Literal["Grammar", "Spelling", "Style", "Vocabulary"]
+    reason: str
+    context_before: str = ""
+    context_after: str = ""
+
+
+class RewriteSentence(BaseModel):
+    original: str
+    rewritten: str
+    explanation: str
+
+
+class HoneSentence(BaseModel):
+    rewritten: str
+
+
+# ---------------------------------------------------------------------------
+# Model Configuration (Google GenAI API)
+# ---------------------------------------------------------------------------
+
+EVALUATE_MODEL = os.getenv("GEMINI_EVALUATE_MODEL", "gemini-4-hydrogen")
+EVALUATE_THINKING_LEVEL = os.getenv("GEMINI_EVALUATE_THINKING_LEVEL", "LOW")
+
+REWRITE_MODEL = os.getenv("GEMINI_REWRITE_MODEL", "gemini-4-hydrogen")
+REWRITE_THINKING_LEVEL = os.getenv("GEMINI_REWRITE_THINKING_LEVEL", "LOW")
+
+HONE_MODEL = os.getenv("GEMINI_HONE_MODEL", "gemini-4-hydrogen")
+HONE_THINKING_LEVEL = os.getenv("GEMINI_HONE_THINKING_LEVEL", "LOW")
+
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-client = None
-if API_KEY:
-    client = genai.Client(api_key=API_KEY)
+API_TIMEOUT_MS = int(os.getenv("GEMINI_TIMEOUT_MS", "60000"))
+client = (
+    genai.Client(api_key=API_KEY, http_options=types.HttpOptions(timeout=API_TIMEOUT_MS))
+    if API_KEY
+    else None
+)
 
-def run_with_cli(system_prompt: str, text: str):
-    full_prompt = f"{system_prompt}\n\nText to evaluate:\n\"\"\"{text}\"\"\""
-    try:
-        result = subprocess.run(
-            ["agy", "-p", full_prompt, 
-             "--model", CLI_MODEL_NAME],
-            capture_output=True,
-            text=True,
-            check=True,
-            stdin=subprocess.DEVNULL,
-            timeout=120
-        )
-        # Strip the eligibility check banner that agy prints before the actual response
-        stdout = result.stdout
-        filtered_lines = [
-            line for line in stdout.splitlines()
-            if "eligibility check" not in line.lower()
+
+# ---------------------------------------------------------------------------
+# Deterministic span anchoring (Python -> UTF-16 JS offsets)
+# ---------------------------------------------------------------------------
+
+_VALID_ERROR_TYPES = {
+    "grammar": "Grammar",
+    "spelling": "Spelling",
+    "style": "Style",
+    "vocabulary": "Vocabulary",
+}
+
+_QUOTE_TRANSLATION = str.maketrans({
+    "\u2018": ", u2019: ", "\u201a": ", u201b: ",
+    "\u201c": ', u201d: ', "\u201e": ', u201f: ',
+    "\u2013": "-", "\u2014": "-", "\u00a0": " ",
+})
+
+
+def _build_py_to_utf16_map(text: str) -> list[int]:
+    """Map each Python string index (0..len(text)) to its UTF-16 code-unit offset (JS index)."""
+    mapping = [0] * (len(text) + 1)
+    u16 = 0
+    for i, ch in enumerate(text):
+        u16 += 2 if ord(ch) > 0xFFFF else 1
+        mapping[i + 1] = u16
+    return mapping
+
+
+def _norm_for_match(s: str) -> str:
+    return re.sub(r"\s+", " ", s.translate(_QUOTE_TRANSLATION)).strip().lower()
+
+
+def _common_suffix_len(a: str, b: str) -> int:
+    n = min(len(a), len(b))
+    k = 0
+    while k < n and a[-1 - k] == b[-1 - k]:
+        k += 1
+    return k
+
+
+def _common_prefix_len(a: str, b: str) -> int:
+    n = min(len(a), len(b))
+    k = 0
+    while k < n and a[k] == b[k]:
+        k += 1
+    return k
+
+
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def _find_candidates(text: str, original: str) -> list[tuple[int, int, bool]]:
+    """Return candidate spans as (py_start, py_end, is_exact)."""
+    candidates: list[tuple[int, int, bool]] = []
+    start = 0
+    while True:
+        idx = text.find(original, start)
+        if idx == -1:
+            break
+        candidates.append((idx, idx + len(original), True))
+        start = idx + 1
+
+    if candidates:
+        return candidates
+
+    # Safe fallback: equivalent quotes/dashes and flexible whitespace only.
+    # _QUOTE_TRANSLATION is strictly 1-to-1 so regex match indices map directly to `text`.
+    norm_text = text.translate(_QUOTE_TRANSLATION)
+    norm_orig = original.translate(_QUOTE_TRANSLATION)
+    parts = re.split(r"(\s+)", norm_orig)
+    pattern = "".join(r"\s+" if p.isspace() else re.escape(p) for p in parts if p)
+    if not pattern:
+        return []
+
+    for m in re.finditer(pattern, norm_text):
+        candidates.append((m.start(), m.end(), False))
+
+    return candidates
+
+
+def _context_score(actual: str, expected: str, side: str) -> float:
+    exp = _norm_for_match(expected)
+    if not exp:
+        return 0.0
+    act = _norm_for_match(actual)
+    if side == "before":
+        if act.endswith(exp):
+            return 100.0 + len(exp)
+        char_overlap = _common_suffix_len(act, exp)
+        act_words = re.findall(r"[a-z0-9']+", act)
+        exp_words = re.findall(r"[a-z0-9']+", exp)
+        word_overlap = 0
+        for aw, ew in zip(reversed(act_words), reversed(exp_words)):
+            if aw == ew:
+                word_overlap += 1
+            else:
+                break
+        return char_overlap * 2.0 + word_overlap * 15.0
+    else:
+        if act.startswith(exp):
+            return 100.0 + len(exp)
+        char_overlap = _common_prefix_len(act, exp)
+        act_words = re.findall(r"[a-z0-9']+", act)
+        exp_words = re.findall(r"[a-z0-9']+", exp)
+        word_overlap = 0
+        for aw, ew in zip(act_words, exp_words):
+            if aw == ew:
+                word_overlap += 1
+            else:
+                break
+        return char_overlap * 2.0 + word_overlap * 15.0
+
+
+def anchor_evaluation_errors(text: str, raw_items: list[dict]) -> list[dict]:
+    """Deterministically anchor LLM evaluation items onto `text`.
+
+    Guarantees for every returned item:
+      - `start` and `end` are UTF-16 code-unit offsets matching JS String.substring()
+      - `original` equals the exact verbatim slice `text[py_start:py_end]` (non-empty)
+      - `original != replacement`
+      - Returned spans are strictly non-overlapping and sorted by `start`
+    """
+    if not text or not isinstance(raw_items, list):
+        return []
+
+    py_to_utf16 = _build_py_to_utf16_map(text)
+    claimed: list[tuple[int, int]] = []
+    resolved: list[tuple[int, dict]] = []
+    cursor = 0
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+
+        original = item.get("original")
+        replacement = item.get("replacement")
+        if not isinstance(original, str) or not original:
+            continue
+        if not isinstance(replacement, str):
+            replacement = ""
+
+        candidates = _find_candidates(text, original)
+        non_overlapping = [
+            (s, e, is_exact)
+            for (s, e, is_exact) in candidates
+            if not any(s < ce and cs < e for cs, ce in claimed)
         ]
-        return "\n".join(filtered_lines).strip()
-    except subprocess.TimeoutExpired:
-        raise Exception("agy CLI timed out")
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"agy CLI execution failed: {e.stderr}")
 
-def run_with_api(system_prompt: str, text: str):
-    if not client:
-        raise Exception("GOOGLE_API_KEY not found in environment or Client not initialized")
-    
-    response = client.models.generate_content(
-        model=API_MODEL_NAME,
-        contents=f"Text to evaluate:\n\"\"\"{text}\"\"\"",
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            response_mime_type="application/json"
-        )
-    )
-    return response.text.strip()
+        if not non_overlapping:
+            logger.warning("Dropping unanchored or overlapping evaluation fragment: %r", original)
+            continue
 
-def extract_json(output: str) -> str:
-    start_arr = output.find('[')
-    end_arr = output.rfind(']')
-    
-    start_obj = output.find('{')
-    end_obj = output.rfind('}')
-    
-    start = -1
-    end = -1
-    
-    if start_arr != -1 and start_obj != -1:
-        if start_arr < start_obj:
-            start, end = start_arr, end_arr
-        else:
-            start, end = start_obj, end_obj
-    elif start_arr != -1:
-        start, end = start_arr, end_arr
-    elif start_obj != -1:
-        start, end = start_obj, end_obj
-        
-    if start != -1 and end != -1 and end > start:
-        return output[start:end+1]
-    return output
+        ctx_before = item.get("context_before") or ""
+        ctx_after = item.get("context_after") or ""
+        if not isinstance(ctx_before, str):
+            ctx_before = ""
+        if not isinstance(ctx_after, str):
+            ctx_after = ""
 
-def process_ai_request(system_prompt: str, text: str, mode: str = "CLI"):
+        def _score_candidate(cand: tuple[int, int, bool]) -> tuple:
+            s, e, is_exact = cand
+            before_win = max(len(ctx_before) + 16, 40)
+            after_win = max(len(ctx_after) + 16, 40)
+            actual_before = text[max(0, s - before_win):s]
+            actual_after = text[e:min(len(text), e + after_win)]
+
+            ctx_score = (
+                _context_score(actual_before, ctx_before, "before")
+                + _context_score(actual_after, ctx_after, "after")
+            )
+            # Bonus if LLM explicitly indicated start/end of text with empty context
+            if not ctx_before.strip() and not text[:s].strip():
+                ctx_score += 20.0
+            if not ctx_after.strip() and not text[e:].strip():
+                ctx_score += 20.0
+
+            # Word-boundary preference prevents matching e.g. "in" inside "into"
+            boundary_score = 0
+            if _is_word_char(text[s]):
+                boundary_score += 1 if (s == 0 or not _is_word_char(text[s - 1])) else -1
+            if _is_word_char(text[e - 1]):
+                boundary_score += 1 if (e == len(text) or not _is_word_char(text[e])) else -1
+
+            in_order = 1 if s >= cursor else 0
+            return (ctx_score, boundary_score, 1 if is_exact else 0, in_order, -abs(s - cursor))
+
+        best_s, best_e, _ = max(non_overlapping, key=_score_candidate)
+        exact_slice = text[best_s:best_e]
+        if exact_slice == replacement:
+            continue
+
+        claimed.append((best_s, best_e))
+        if best_e > cursor:
+            cursor = best_e
+
+        u16_start = py_to_utf16[best_s]
+        u16_end = py_to_utf16[best_e]
+        err_type = _VALID_ERROR_TYPES.get(str(item.get("type", "Grammar")).strip().lower(), "Grammar")
+
+        resolved.append((
+            best_s,
+            {
+                "original": exact_slice,
+                "replacement": replacement,
+                "type": err_type,
+                "reason": item.get("reason", "") or "",
+                "start": u16_start,
+                "end": u16_end,
+                "offset": u16_start,
+                "length": u16_end - u16_start,
+            },
+        ))
+
+    resolved.sort(key=lambda pair: pair[0])
+    return [entry for _, entry in resolved]
+
+
+# ---------------------------------------------------------------------------
+# GenAI Request Helper
+# ---------------------------------------------------------------------------
+
+
+def _build_thinking_config(level: str | None) -> types.ThinkingConfig | None:
+    if not level or not level.strip():
+        return None
+    normalized = level.strip().upper()
     try:
-        if mode == "API":
-            output = run_with_api(system_prompt, text)
-        else:
-            try:
-                output = run_with_cli(system_prompt, text)
-            except Exception as cli_error:
-                print(f"CLI mode failed: {cli_error}")
-                if client:
-                    print("Falling back to API mode...")
-                    output = run_with_api(system_prompt, text)
-                else:
-                    raise cli_error
-        
-        # Strip markdown code blocks if agy accidentally includes them
-        if output.startswith("```"):
-            output = re.sub(r"^```(?:json)?\n?|```$", "", output, flags=re.MULTILINE).strip()
-            
-        clean_output = extract_json(output)
-        try:
-            return json.loads(clean_output)
-        except json.JSONDecodeError as e:
-            print(f"JSON Parse Error: {e}")
-            print(f"Raw Output: {output}")
-            return {"error": "Failed to parse agy output as JSON", "raw": output}
-            
-    except Exception as e:
-        print(f"Error in process_ai_request ({mode}): {e}")
-        return {"error": str(e)}
+        thinking_level = types.ThinkingLevel[normalized]
+    except KeyError:
+        logger.warning("Unknown thinking level %r; falling back to model default", level)
+        return None
+    return types.ThinkingConfig(thinking_level=thinking_level)
 
-def evaluate_text(text: str, mode: str = "CLI"):
-    return process_ai_request(EVALUATE_SYSTEM_PROMPT, text, mode)
 
-def rewrite_text(text: str, mode: str = "CLI"):
-    return process_ai_request(REWRITE_SYSTEM_PROMPT, text, mode)
+def _generate_json(
+    *,
+    model: str,
+    system_prompt: str,
+    text: str,
+    response_schema: object,
+    thinking_level: str | None = None,
+) -> list[dict] | dict:
+    if not client:
+        return {"error": "GEMINI_API_KEY not found in environment or client not initialized"}
 
-def hone_text(text: str, mode: str = "CLI"):
-    return process_ai_request(HONE_SYSTEM_PROMPT, text, mode)
+    config_kwargs: dict = {
+        "system_instruction": system_prompt,
+        "response_mime_type": "application/json",
+        "response_schema": response_schema,
+    }
+    thinking_config = _build_thinking_config(thinking_level)
+    if thinking_config is not None:
+        config_kwargs["thinking_config"] = thinking_config
+
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=f"Text:\n\"\"\"\n{text}\n\"\"\"",
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+        raw_text = (response.text or "").strip()
+        if not raw_text:
+            return {"error": f"Empty response from model {model}"}
+        return json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        logger.error("JSON parse error from %s: %s", model, exc)
+        return {"error": f"Failed to parse {model} output as JSON"}
+    except Exception as exc:
+        logger.error("Gemini API error (%s): %s", model, exc)
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Public Bridge Functions
+# ---------------------------------------------------------------------------
+
+
+def evaluate_text(text: str) -> list[dict] | dict:
+    raw_results = _generate_json(
+        model=EVALUATE_MODEL,
+        system_prompt=EVALUATE_SYSTEM_PROMPT,
+        text=text,
+        response_schema=list[EvaluateErrorItem],
+        thinking_level=EVALUATE_THINKING_LEVEL,
+    )
+    if isinstance(raw_results, dict) and "error" in raw_results:
+        return raw_results
+    if isinstance(raw_results, list):
+        return anchor_evaluation_errors(text, raw_results)
+    return []
+
+
+def rewrite_text(text: str) -> list[dict] | dict:
+    return _generate_json(
+        model=REWRITE_MODEL,
+        system_prompt=REWRITE_SYSTEM_PROMPT,
+        text=text,
+        response_schema=list[RewriteSentence],
+        thinking_level=REWRITE_THINKING_LEVEL,
+    )
+
+
+def hone_text(text: str) -> list[dict] | dict:
+    return _generate_json(
+        model=HONE_MODEL,
+        system_prompt=HONE_SYSTEM_PROMPT,
+        text=text,
+        response_schema=list[HoneSentence],
+        thinking_level=HONE_THINKING_LEVEL,
+    )

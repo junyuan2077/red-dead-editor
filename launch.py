@@ -179,7 +179,7 @@ def _start_fastapi() -> subprocess.Popen:
     cmd = [
         sys.executable, "-m", "uvicorn",
         "main:app",
-        "--host", "0.0.0.0",
+        "--host", "127.0.0.1",
         "--port", str(FASTAPI_PORT),
     ]
 

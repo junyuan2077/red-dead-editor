@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import gemini_bridge
 
@@ -55,14 +55,15 @@ app = FastAPI(
     title="Red Dead Editor API",
     description="English writing practice backend powered by Gemini.",
     version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
-# Allow any origin so the frontend (or external tools) can call the API
-# without CORS issues.
+# Restrict CORS to the production origin only.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["https://mary-beth.help"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -74,23 +75,23 @@ app.add_middleware(
 
 class EvaluateRequest(BaseModel):
     """Body for POST /api/evaluate."""
-    text: str
+    text: str = Field(..., max_length=8000)
 
 
 class RewriteRequest(BaseModel):
     """Body for POST /api/rewrite."""
-    sentence: str
-    context: str = ""
+    sentence: str = Field(..., max_length=8000)
+    context: str = Field(default="", max_length=8000)
 
 
 class HoneRequest(BaseModel):
     """Body for POST /api/hone."""
-    text: str
+    text: str = Field(..., max_length=8000)
 
 
 class TTSRequest(BaseModel):
     """Body for POST /api/tts."""
-    text: str
+    text: str = Field(..., max_length=8000)
 
 
 # ---------------------------------------------------------------------------
@@ -126,10 +127,12 @@ def evaluate_text_endpoint(req: EvaluateRequest) -> dict:
     errors = []
     if isinstance(raw_results, list):
         for item in raw_results:
+            start = item["start"] if "start" in item else item.get("offset", 0)
+            end = item["end"] if "end" in item else start + item.get("length", 0)
             errors.append({
                 "type": item.get("type", "Grammar"),
-                "start": item.get("offset", 0),
-                "end": item.get("offset", 0) + item.get("length", 0),
+                "start": start,
+                "end": end,
                 "original": item.get("original", ""),
                 "suggestion": item.get("replacement", ""),
                 "explanation": item.get("reason", "")
@@ -265,72 +268,6 @@ async def text_to_speech(req: TTSRequest) -> StreamingResponse:
             status_code=exc.response.status_code,
             detail=f"TTS service error: {exc.response.text[:500]}",
         )
-# ---------------------------------------------------------------------------
-# Screenshot Browser API Endpoints
-# ---------------------------------------------------------------------------
-
-SCREENSHOTS_DIR = os.path.join(BASE_DIR, "screenshots")
-os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-
-
-@app.get("/api/screenshots")
-def list_screenshots() -> list[dict]:
-    """List screenshots in the screenshots directory, sorted by modification time descending."""
-    screenshots = []
-    # search SCREENSHOTS_DIR for image files
-    for filename in os.listdir(SCREENSHOTS_DIR):
-        file_path = os.path.join(SCREENSHOTS_DIR, filename)
-        if os.path.isfile(file_path):
-            ext = os.path.splitext(filename)[1].lower()
-            if ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"):
-                stat = os.stat(file_path)
-                screenshots.append({
-                    "filename": filename,
-                    "size": stat.st_size,
-                    "mtime": stat.st_mtime,
-                    "url": f"/api/screenshots/{filename}",
-                    "is_screenshot": filename.startswith("shot_")
-                })
-    # Sort by mtime descending
-    screenshots.sort(key=lambda x: x["mtime"], reverse=True)
-    return screenshots
-
-
-@app.get("/api/screenshots/{filename}")
-def get_screenshot(filename: str) -> FileResponse:
-    """Serve a screenshot file securely, avoiding path traversal."""
-    clean_filename = os.path.basename(filename)
-    file_path = os.path.join(SCREENSHOTS_DIR, clean_filename)
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    ext = os.path.splitext(clean_filename)[1].lower()
-    if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"):
-        raise HTTPException(status_code=403, detail="File type not allowed")
-        
-    return FileResponse(file_path)
-
-
-@app.delete("/api/screenshots/{filename}")
-def delete_screenshot(filename: str) -> dict:
-    """Delete a screenshot file securely (only allows deleting files starting with shot_)."""
-    clean_filename = os.path.basename(filename)
-    if not clean_filename.startswith("shot_"):
-        raise HTTPException(
-            status_code=403, 
-            detail="Only screenshots (files starting with 'shot_') can be deleted to prevent asset corruption."
-        )
-        
-    file_path = os.path.join(SCREENSHOTS_DIR, clean_filename)
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-        
-    try:
-        os.remove(file_path)
-        return {"status": "success", "message": f"Deleted {clean_filename}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # ---------------------------------------------------------------------------
 # Static frontend — MUST be mounted AFTER all /api routes so it doesn't

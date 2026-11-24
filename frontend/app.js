@@ -23,7 +23,7 @@ const API_BASE      = '';                // Base URL for API calls (empty = same
 const TOAST_DURATION = 3000;             // Toast auto-dismiss in milliseconds
 const STORAGE_KEY   = 'rdo_entries';     // LocalStorage key for journal entries
 
-const DEFAULT_ENTRY_TEXT = 'Dear Diary,\nI think about him constantly. His presence always inflicts a warm, comforting feeling in my chest. Yesterday, we walked home together and he says something funny that made me blush. Every one of his small gestures make me forget my own name. I hope this puppy love is not unrequitted, although I am too shy to ask. I wish I could tell him how I feel, but in my personal opinion, I think he might already know. His charm is completely irresistable. Even when he is just reading a book, he looks so handsome. Maybe tomorrow I will find the courage to talk to him more, rather than just staring from afar like a secret admirer.';
+const DEFAULT_ENTRY_TEXT = 'Dear Diary,\nI think about him constantly. His presence always inflicts a warm, comforting feeling in my chest. Yesterday, we walked home together and he says something funny that made me blush. Every one of his small gestures make me forget my own name. I hope this puppy love is not unrequitted, although I am too shy to ask. The novel was finished by me last night under the starlight, and tears were shed by my eyes because the ending was so tragic. I wish I could tell him how I feel, but in my personal opinion, I think he might already know. His charm is completely irresistable. Even when he is just reading a book, he looks so handsome. Maybe tomorrow I will find the courage to talk to him more, rather than just staring from afar like a secret admirer.';
 
 /* --------------------------------------------------------------------------
    2. APPLICATION STATE
@@ -463,7 +463,7 @@ async function evaluate(force = false) {
   const isSwitchingBack = (AppState.inRewriteMode || AppState.inHoneMode);
 
   if (AppState.inRewriteMode) {
-    exitRewriteMode(false);
+    exitRewriteMode(true);
   }
   if (AppState.inHoneMode) {
     exitHoneMode(true);
@@ -486,16 +486,23 @@ async function evaluate(force = false) {
     return;
   }
 
-  const text = DOM.textarea.value.trim();
-  if (!text) {
+  const rawText = DOM.textarea.value;
+  if (!rawText.trim()) {
     showToast('Write something first, partner.', 'error');
     return;
   }
 
+  // Blur textarea while evaluating so keyboard input cannot desync in-flight offsets
+  DOM.textarea.blur();
   setLoading('evaluate');
 
   try {
-    const data = await apiEvaluate(text);
+    const data = await apiEvaluate(rawText);
+
+    // Abort if text changed while the request was in flight
+    if (DOM.textarea.value !== rawText) {
+      return;
+    }
 
     // Store results in state
     AppState.errors       = data.errors || [];
@@ -540,11 +547,7 @@ async function rewrite(force = false) {
 
   // Toggle: if already in rewrite mode, exit back to editor
   if (AppState.inRewriteMode && !force) {
-    if (AppState.rewrittenOnce || AppState.honedOnce) {
-      // Rule 1: No action is taken; the interface remains unchanged.
-      return;
-    }
-    exitRewriteMode();
+    exitRewriteMode(true);
     return;
   }
 
@@ -639,8 +642,10 @@ function enterRewriteMode(sentences) {
 
 /**
  * Exit the rewrite view mode and return to standard editor.
+ * @param {boolean} restoreUI - If true, re-renders highlights, corrections, and focuses the textarea.
+ *                               Pass false when immediately entering another mode (hone/evaluate) to avoid a flash.
  */
-function exitRewriteMode() {
+function exitRewriteMode(restoreUI = true) {
   AppState.inRewriteMode = false;
   AppState.activeRewriteIndex = null;
   if (currentAudio) {
@@ -663,17 +668,17 @@ function exitRewriteMode() {
   // Toggle class on container
   DOM.journalContainer?.classList.remove('view-rewrite');
 
-  // Re-render standard highlights and corrections
-  renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
-  renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+  if (restoreUI) {
+    // Re-render standard highlights and corrections
+    renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
 
-  // Focus textarea
-  if (focusTextarea) {
+    // Focus textarea
     DOM.textarea?.focus();
-  }
 
-  // Update button states
-  updateButtonStates();
+    // Update button states
+    updateButtonStates();
+  }
   saveActiveSession();
 }
 
@@ -690,10 +695,6 @@ async function hone(force = false) {
 
   // Toggle: if already in hone mode, exit back to standard editor view
   if (AppState.inHoneMode && !force) {
-    if (AppState.rewrittenOnce || AppState.honedOnce) {
-      // Rule 1: No action is taken; the interface remains unchanged.
-      return;
-    }
     exitHoneMode(true);
     return;
   }
@@ -1041,11 +1042,18 @@ function playSpeechSynthesisFallback(text, element) {
 
   const utterance = new SpeechSynthesisUtterance(text);
   
-  // Try to find a suitable English voice (e.g. Google, British, US)
+  // Try to find a suitable female English voice
   const voices = window.speechSynthesis.getVoices();
-  const englishVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Google')) ||
-                      voices.find(v => v.lang.startsWith('en')) ||
-                      voices[0];
+  const femaleKeywords = ['samantha', 'zira', 'karen', 'susan', 'hazel', 'serena', 'moira', 'tessa', 'victoria', 'google us english', 'female'];
+  const englishVoice = voices.find(v => {
+    if (!v.lang.startsWith('en')) return false;
+    const nameLower = v.name.toLowerCase();
+    return nameLower.includes('female') || femaleKeywords.some(kw => nameLower.includes(kw));
+  }) ||
+  voices.find(v => v.lang.startsWith('en') && v.name.includes('Google')) ||
+  voices.find(v => v.lang.startsWith('en')) ||
+  voices[0];
+  
   if (englishVoice) {
     utterance.voice = englishVoice;
   }
@@ -1104,9 +1112,9 @@ function getEntries() {
   try {
     let raw = localStorage.getItem(STORAGE_KEY);
 
-    // If the older seeds exist but not the v4 one, force-update to the new puppy-love text with 6 advanced mistakes
-    if (!localStorage.getItem('rde_seeded_diary_v4')) {
-      localStorage.setItem('rde_seeded_diary_v4', 'true');
+    // If the older seeds exist but not the v5 one, force-update to the new puppy-love text with 6 advanced mistakes and passive sentence
+    if (!localStorage.getItem('rde_seeded_diary_v5')) {
+      localStorage.setItem('rde_seeded_diary_v5', 'true');
       if (raw) {
         try {
           let entries = JSON.parse(raw);
@@ -1117,7 +1125,7 @@ function getEntries() {
                 title: 'June 28, Sunday. Weather: Sunny day (晴天)',
                 text: DEFAULT_ENTRY_TEXT,
                 date: new Date().toISOString(),
-                wordCount: 118
+                wordCount: 142
               };
             }
             return entry;
@@ -1133,16 +1141,16 @@ function getEntries() {
       }
     }
 
-    if (!raw && !localStorage.getItem('rde_seeded_diary_v4')) {
+    if (!raw) {
       const defaultEntry = {
         id: 'seed_crush_diary',
         title: 'June 28, Sunday. Weather: Sunny day (晴天)',
         text: DEFAULT_ENTRY_TEXT,
         date: new Date().toISOString(),
-        wordCount: 118
+        wordCount: 142
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify([defaultEntry]));
-      localStorage.setItem('rde_seeded_diary_v4', 'true');
+      localStorage.setItem('rde_seeded_diary_v5', 'true');
       return [defaultEntry];
     }
     return JSON.parse(raw || '[]');
@@ -1243,8 +1251,10 @@ function deleteEntry(id) {
 
 /**
  * Start a fresh new entry.
+ * @param {boolean} isInit - If true and there are no entries, populates with DEFAULT_ENTRY_TEXT.
+ *                           Otherwise, starts with a clean empty editor.
  */
-function newEntry() {
+function newEntry(isInit = false) {
   if (AppState.inRewriteMode) {
     exitRewriteMode();
   }
@@ -1252,7 +1262,7 @@ function newEntry() {
     exitHoneMode(false);
   }
   const entries = getEntries();
-  const defaultVal = entries.length === 0 ? DEFAULT_ENTRY_TEXT : '';
+  const defaultVal = (entries.length === 0 && isInit === true) ? DEFAULT_ENTRY_TEXT : '';
   DOM.textarea.value      = defaultVal;
   AppState.currentEntryId = null;
   AppState.errors         = [];
@@ -1672,6 +1682,18 @@ function updateCounts() {
  * Animate card applying and slide out before invoking applyFix.
  */
 function animateApplyFix(errorIndex) {
+  const err = AppState.errors[errorIndex];
+  if (!err) return;
+
+  // Verify the span still matches before animating the card away
+  const currentSlice = DOM.textarea.value.substring(err.start, err.end);
+  if (currentSlice !== err.original) {
+    showToast('Text changed since evaluation — please re-evaluate.', 'error');
+    renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+    return;
+  }
+
   const cardEl = DOM.correctionsList.querySelector(`.correction-card[data-error-index="${errorIndex}"]`);
   if (!cardEl) {
     applyFix(errorIndex);
@@ -1711,9 +1733,18 @@ function applyFix(errorIndex) {
   const err = AppState.errors[errorIndex];
   if (!err) return;
 
+  const text = DOM.textarea.value;
+  if (text.substring(err.start, err.end) !== err.original) {
+    showToast('Could not apply fix — text no longer matches. Please re-evaluate.', 'error');
+    renderHighlights(text, AppState.errors, AppState.appliedFixes);
+    if (!AppState.inRewriteMode) {
+      renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+    }
+    return;
+  }
+
   setMaryBethPose('apply-fix');
 
-  const text   = DOM.textarea.value;
   const before = text.substring(0, err.start);
   const after  = text.substring(err.end);
 
@@ -1735,7 +1766,7 @@ function applyFix(errorIndex) {
   // Adjust positions of remaining errors
   AppState.errors.splice(errorIndex, 1);
   AppState.errors.forEach((e) => {
-    if (e.start > err.start) {
+    if (e.start >= err.end) {
       e.start += lengthDiff;
       e.end   += lengthDiff;
     }
@@ -1744,7 +1775,7 @@ function applyFix(errorIndex) {
   // Adjust positions of other already applied fixes
   AppState.appliedFixes.forEach((f, idx) => {
     // Exclude the one we just added
-    if (idx !== AppState.appliedFixes.length - 1 && f.start > err.start) {
+    if (idx !== AppState.appliedFixes.length - 1 && f.start >= err.end) {
       f.start += lengthDiff;
       f.end   += lengthDiff;
     }
@@ -1793,7 +1824,12 @@ function undoFix(fixIndex) {
   const fix = AppState.appliedFixes[fixIndex];
   if (!fix) return;
 
-  const text   = DOM.textarea.value;
+  const text = DOM.textarea.value;
+  if (text.substring(fix.start, fix.end) !== fix.suggestion) {
+    showToast('Could not undo fix — text has changed.', 'error');
+    return;
+  }
+
   const before = text.substring(0, fix.start);
   const after  = text.substring(fix.end);
 
@@ -1803,7 +1839,7 @@ function undoFix(fixIndex) {
 
   // Adjust positions of remaining errors
   AppState.errors.forEach((e) => {
-    if (e.start > fix.start) {
+    if (e.start >= fix.end) {
       e.start += lengthDiff;
       e.end   += lengthDiff;
     }
@@ -1811,7 +1847,7 @@ function undoFix(fixIndex) {
 
   // Adjust positions of other applied fixes
   AppState.appliedFixes.forEach((f, idx) => {
-    if (idx !== fixIndex && f.start > fix.start) {
+    if (idx !== fixIndex && f.start >= fix.end) {
       f.start += lengthDiff;
       f.end   += lengthDiff;
     }
@@ -2766,7 +2802,7 @@ function setupLongPress(btnEl, clickCallback, longPressCallback) {
 
 const MARYBETH_POSES = {
   'idle-reading': 'assets/marybeth/idle-reading.webp',
-  'evaluate':     'assets/marybeth/evaluate.webp',
+  'evaluate':     'assets/marybeth/idle-reading.webp',
   'rewrite':      'assets/marybeth/rewrite.webp',
   'hone':         'assets/marybeth/hone.webp',
   'apply-fix':    'assets/marybeth/apply-fix.webp',
@@ -2841,9 +2877,9 @@ function preloadMaryBethImages() {
    -------------------------------------------------------------------------- */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Migrate existing localStorage databases and sessions to the 118-word puppy-love seed (v4)
-  if (!localStorage.getItem('rde_seeded_diary_v4')) {
-    localStorage.setItem('rde_seeded_diary_v4', 'true');
+  // Migrate existing localStorage databases and sessions to the 142-word puppy-love seed (v5)
+  if (!localStorage.getItem('rde_seeded_diary_v5')) {
+    localStorage.setItem('rde_seeded_diary_v5', 'true');
     localStorage.removeItem('rde_active_session');
     
     const rawEntries = localStorage.getItem(STORAGE_KEY);
@@ -2857,7 +2893,7 @@ document.addEventListener('DOMContentLoaded', () => {
               title: 'June 28, Sunday. Weather: Sunny day (晴天)',
               text: DEFAULT_ENTRY_TEXT,
               date: new Date().toISOString(),
-              wordCount: 118
+              wordCount: 142
             };
           }
           return entry;
@@ -2882,7 +2918,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const restored = restoreActiveSession();
   const entries = getEntries();
   if (entries.length === 0) {
-    newEntry();
+    newEntry(true);
   } else if (!restored) {
     loadEntry(entries[0].id);
   }

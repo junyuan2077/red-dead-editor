@@ -72,7 +72,7 @@
 
   /* === Sizing === */
   --header-height: 90px;
-  --footer-height: 28px;
+  --footer-height: 36px;
   --sidebar-width-left:  256px;
   --sidebar-width-right: 356px;
   --radius-sm: 4px;
@@ -1492,7 +1492,7 @@ body::after {
 @media (max-width: 768px) {
   :root {
     --header-height: 60px;
-    --footer-height: 24px;
+    --footer-height: 30px;
   }
 
   .header-title {
@@ -2300,15 +2300,23 @@ body.auth-locked .auth-gate {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(var(--bg-deep-rgb), 0.94);
-  border-top: 1px solid rgba(199, 164, 74, 0.14);
+  background: linear-gradient(180deg, rgba(36, 24, 20, 0.96) 0%, rgba(20, 14, 12, 0.98) 100%);
+  border-top: 1px solid rgba(199, 164, 74, 0.34);
+  box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.45);
   font-family: 'RedDeadText', 'Georgia', serif;
-  font-size: 0.72rem;
-  letter-spacing: 0.12em;
-  color: var(--text-muted);
+  font-size: 0.86rem;
+  letter-spacing: 0.14em;
+  color: var(--parchment);
 }
 
 .footer-credit-handle {
-  color: var(--gold);
-  font-weight: normal;
+  color: var(--gold-light);
+  font-weight: 600;
+  text-shadow: 0 0 12px rgba(199, 164, 74, 0.45);
+}
+
+@media (max-width: 768px) {
+  .site-footer {
+    font-size: 0.78rem;
+  }
 }

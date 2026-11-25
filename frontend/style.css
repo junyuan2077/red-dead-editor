@@ -2312,7 +2312,16 @@ body.auth-locked .auth-gate {
 .footer-credit-handle {
   color: var(--gold-light);
   font-weight: 600;
+  text-decoration: none;
   text-shadow: 0 0 12px rgba(199, 164, 74, 0.45);
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+.footer-credit-handle:hover,
+.footer-credit-handle:focus-visible {
+  color: #fff6dc;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 @media (max-width: 768px) {

@@ -13,6 +13,7 @@ Serves:
 from __future__ import annotations
 
 from collections import OrderedDict, deque
+import json
 import logging
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ import threading
 import time
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -28,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import gemini_bridge
+import storage
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -47,6 +49,17 @@ RATE_LIMIT_WINDOW_S: float = 60.0
 _RATE_LIMITED_PATHS = {"/api/evaluate", "/api/rewrite", "/api/hone", "/api/tts"}
 _rate_limit_hits: dict[str, deque[float]] = {}
 _rate_limit_lock = threading.Lock()
+
+SESSION_COOKIE_NAME: str = "rde_session"
+SESSION_MAX_AGE: int = 90 * 86400
+_MAX_STATE_BODY_BYTES: int = 2 * 1024 * 1024
+
+_LOGIN_MAX_FAILURES: int = 8
+_LOGIN_WINDOW_S: float = 300.0
+_login_failures: dict[str, deque[float]] = {}
+_login_failures_lock = threading.Lock()
+
+storage.init_db()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -108,9 +121,15 @@ async def api_guard_and_timing(request: Request, call_next):
                 )
             timestamps.append(now)
 
+    if path == "/api/state" and request.method in ("PUT", "POST"):
+        content_len = request.headers.get("content-length")
+        if content_len and content_len.isdigit() and int(content_len) > _MAX_STATE_BODY_BYTES:
+            return JSONResponse(status_code=413, content={"detail": "State payload too large."})
+
     if path.startswith("/api/"):
         t0 = time.perf_counter()
         response = await call_next(request)
+        response.headers.setdefault("Cache-Control", "no-store")
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         logger.info("%s %s -> %d (%.0fms)", request.method, path, response.status_code, elapsed_ms)
         return response
@@ -157,9 +176,159 @@ class TTSRequest(BaseModel):
     text: str = Field(..., max_length=8000)
 
 
+class LoginRequest(BaseModel):
+    """Body for POST /api/auth/login."""
+    username: str = Field(..., min_length=1, max_length=64)
+
+
+class StateUpdateRequest(BaseModel):
+    """Body for PUT/POST /api/state."""
+    entries: list[dict] | None = Field(default=None, max_length=500)
+    active_session: dict | None = None
+
+
+def require_user(request: Request) -> dict:
+    """Validate the HttpOnly session cookie and return the authenticated user."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    user = storage.get_user_by_session(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required. Please sign in.")
+    return user
+
+
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
+
+
+def _is_https_request(request: Request) -> bool:
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return request.url.scheme == "https" or proto == "https"
+
+
+def _check_login_rate_limit(client_ip: str) -> None:
+    now = time.monotonic()
+    cutoff = now - _LOGIN_WINDOW_S
+    with _login_failures_lock:
+        failures = _login_failures.get(client_ip)
+        if failures:
+            while failures and failures[0] <= cutoff:
+                failures.popleft()
+            if len(failures) >= _LOGIN_MAX_FAILURES:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many failed login attempts. Try again in a few minutes.",
+                )
+
+
+def _record_login_failure(client_ip: str) -> None:
+    now = time.monotonic()
+    cutoff = now - _LOGIN_WINDOW_S
+    with _login_failures_lock:
+        if len(_login_failures) > 512:
+            stale = [ip for ip, q in _login_failures.items() if not q or q[-1] <= cutoff]
+            for ip in stale:
+                del _login_failures[ip]
+        failures = _login_failures.get(client_ip)
+        if failures is None:
+            failures = deque()
+            _login_failures[client_ip] = failures
+        while failures and failures[0] <= cutoff:
+            failures.popleft()
+        failures.append(now)
+
+
+def _clear_login_failures(client_ip: str) -> None:
+    with _login_failures_lock:
+        _login_failures.pop(client_ip, None)
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request) -> JSONResponse:
+    """Verify session cookie and return user + cloud state if authenticated."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    user = storage.get_user_by_session(token)
+    if not user:
+        resp = JSONResponse({"authenticated": False})
+        if token:
+            resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
+        return resp
+    state = storage.get_user_state(user["id"])
+    return JSONResponse({"authenticated": True, "username": user["username"], **state})
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: LoginRequest, request: Request) -> JSONResponse:
+    """Authenticate a manually provisioned username and issue an HttpOnly session cookie."""
+    client_ip = _get_client_ip(request)
+    _check_login_rate_limit(client_ip)
+
+    user = storage.authenticate_username(req.username)
+    if not user:
+        _record_login_failure(client_ip)
+        raise HTTPException(
+            status_code=401,
+            detail="Unrecognized username. Accounts are provisioned privately.",
+        )
+
+    _clear_login_failures(client_ip)
+    raw_token = storage.create_session(user["id"], SESSION_MAX_AGE)
+    state = storage.get_user_state(user["id"])
+    resp = JSONResponse({"authenticated": True, "username": user["username"], **state})
+    resp.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=raw_token,
+        max_age=SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=_is_https_request(request),
+        path="/",
+    )
+    return resp
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request) -> JSONResponse:
+    """Revoke current session cookie and clear browser auth state."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    storage.delete_session(token)
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return resp
+
+
+@app.get("/api/state")
+async def get_cloud_state(user: dict = Depends(require_user)) -> dict:
+    """Fetch persisted journal entries and active session for the signed-in user."""
+    return storage.get_user_state(user["id"])
+
+
+@app.put("/api/state")
+@app.post("/api/state")
+async def save_cloud_state(request: Request, user: dict = Depends(require_user)) -> dict:
+    """Persist journal entries and/or active workspace session to SQLite cloud storage."""
+    raw_bytes = await request.body()
+    if len(raw_bytes) > _MAX_STATE_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="State payload too large.")
+    try:
+        raw_obj = json.loads(raw_bytes.decode("utf-8"))
+        payload = StateUpdateRequest.model_validate(raw_obj)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid state payload: {exc}")
+
+    has_entries = "entries" in payload.model_fields_set and payload.entries is not None
+    has_active = "active_session" in payload.model_fields_set
+    if not has_entries and not has_active:
+        state = storage.get_user_state(user["id"])
+        return {"ok": True, "updated_at": state["updated_at"]}
+
+    updated_at = storage.save_user_state(
+        user["id"],
+        entries=payload.entries if has_entries else None,
+        active_session=payload.active_session,
+        has_active_session=has_active,
+    )
+    return {"ok": True, "updated_at": updated_at}
 
 
 @app.get("/api/health")
@@ -169,7 +338,7 @@ async def health_check() -> dict:
 
 
 @app.post("/api/evaluate")
-def evaluate_text_endpoint(req: EvaluateRequest) -> dict:
+def evaluate_text_endpoint(req: EvaluateRequest, user: dict = Depends(require_user)) -> dict:
     """Evaluate English writing for grammar, spelling, style, and vocabulary."""
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="Text must not be empty.")
@@ -206,7 +375,7 @@ def evaluate_text_endpoint(req: EvaluateRequest) -> dict:
 
 
 @app.post("/api/rewrite")
-def rewrite_sentence(req: RewriteRequest) -> dict:
+def rewrite_sentence(req: RewriteRequest, user: dict = Depends(require_user)) -> dict:
     """Rewrite the text (could be single sentence or full article) for clarity and style."""
     if not req.sentence.strip():
         raise HTTPException(status_code=400, detail="Sentence must not be empty.")
@@ -239,7 +408,7 @@ def rewrite_sentence(req: RewriteRequest) -> dict:
 
 
 @app.post("/api/hone")
-def hone_text(req: HoneRequest) -> dict:
+def hone_text(req: HoneRequest, user: dict = Depends(require_user)) -> dict:
     """Refine / polish an entire text passage."""
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="Text must not be empty.")
@@ -285,7 +454,7 @@ def hone_text(req: HoneRequest) -> dict:
 
 
 @app.post("/api/tts")
-def text_to_speech(req: TTSRequest) -> Response:
+def text_to_speech(req: TTSRequest, user: dict = Depends(require_user)) -> Response:
     """Synthesize speech via Gemini TTS and return ``audio/wav`` with bounded caching."""
     clean_text = req.text.strip()
     if not clean_text:

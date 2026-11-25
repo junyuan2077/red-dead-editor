@@ -4,9 +4,9 @@
 
    Handles:
    - Dual-layer overlay synchronization (textarea + highlight marks)
-   - API calls for evaluate, rewrite, hone, TTS
+   - Invite-only authentication & HttpOnly cookie session lifecycle
+   - API calls for evaluate, rewrite, hone, TTS, and cloud state sync
    - IndexedDB audio caching
-   - LocalStorage journal persistence
    - Responsive sidebar drawers
    - Toast notifications
    - Keyboard shortcuts
@@ -18,10 +18,8 @@
    1. CONSTANTS & CONFIGURATION
    -------------------------------------------------------------------------- */
 
-const API_BASE      = '';                // Base URL for API calls (empty = same origin)
-
-const TOAST_DURATION = 3000;             // Toast auto-dismiss in milliseconds
-const STORAGE_KEY   = 'rdo_entries';     // LocalStorage key for journal entries
+const API_BASE        = '';              // Base URL for API calls (empty = same origin)
+const TOAST_DURATION  = 3000;            // Toast auto-dismiss in milliseconds
 
 const DEFAULT_ENTRY_TEXT = 'Dear Diary,\nI think about him constantly. His presence always inflicts a warm, comforting feeling in my chest. Yesterday, we walked home together and he says something funny that made me blush. Every one of his small gestures make me forget my own name. I hope this puppy love is not unrequitted, although I am too shy to ask. The novel was finished by me last night under the starlight, and tears were shed by my eyes because the ending was so tragic. I wish I could tell him how I feel, but in my personal opinion, I think he might already know. His charm is completely irresistable. Even when he is just reading a book, he looks so handsome. Maybe tomorrow I will find the courage to talk to him more, rather than just staring from afar like a secret admirer.';
 
@@ -31,10 +29,13 @@ const DEFAULT_ENTRY_TEXT = 'Dear Diary,\nI think about him constantly. His prese
    -------------------------------------------------------------------------- */
 
 const AppState = {
+  authenticated:         false,
+  username:              null,
+  syncState:             'saved',
   currentText:           '',
   errors:                [],       // Array of {type, start, end, original, suggestion, explanation}
   appliedFixes:          [],       // Array of {start, end, original, suggestion, originalError}
-  history:               [],       // Loaded from localStorage
+  history:               [],       // Synchronized with server cloud state
   isLoading:             false,
   activeOperation:       null,     // 'evaluate' | 'rewrite' | 'hone' | null
   historySidebarOpen:    false,
@@ -111,6 +112,22 @@ function initDOMReferences() {
   // Mary-Beth avatar
   DOM.maryBethAvatar = document.getElementById('marybeth-avatar');
   DOM.maryBethSprite = document.getElementById('marybeth-sprite');
+
+  // Auth gate & header/mobile user status
+  DOM.authGate          = document.getElementById('auth-gate');
+  DOM.authChecking      = document.getElementById('auth-checking');
+  DOM.authForm          = document.getElementById('auth-form');
+  DOM.authUsernameInput = document.getElementById('auth-username-input');
+  DOM.authError         = document.getElementById('auth-error');
+  DOM.btnAuthSubmit     = document.getElementById('btn-auth-submit');
+  DOM.headerUser        = document.getElementById('header-user');
+  DOM.headerUsername    = document.getElementById('header-username');
+  DOM.syncStatus        = document.getElementById('sync-status');
+  DOM.btnLogout         = document.getElementById('btn-logout');
+  DOM.sidebarAccountRow = document.getElementById('sidebar-account-row');
+  DOM.mobileUsername    = document.getElementById('mobile-username');
+  DOM.mobileSyncStatus  = document.getElementById('mobile-sync-status');
+  DOM.btnMobileLogout   = document.getElementById('btn-mobile-logout');
 }
 
 /* --------------------------------------------------------------------------
@@ -436,12 +453,30 @@ function activateRewriteBlock(idx, focusRewritten = false) {
    All return Promises; errors are thrown and caught by callers.
    -------------------------------------------------------------------------- */
 
+function makeSessionExpiredError() {
+  const err = new Error('Session expired. Please sign in again.');
+  err.isSessionExpired = true;
+  return err;
+}
+
+async function apiFetch(path, options = {}) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    credentials: 'same-origin',
+    ...options,
+  });
+  if (res.status === 401 && !options.skipAuthCheck) {
+    handleSessionExpired();
+    throw makeSessionExpiredError();
+  }
+  return res;
+}
+
 /**
  * Send text for grammatical/stylistic evaluation.
  * Expected response: { score, summary, errors: [{type, start, end, original, suggestion, explanation}] }
  */
 async function apiEvaluate(text) {
-  const res = await fetch(`${API_BASE}/api/evaluate`, {
+  const res = await apiFetch('/api/evaluate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
@@ -455,7 +490,7 @@ async function apiEvaluate(text) {
  * Expected response: { rewritten, explanation }
  */
 async function apiRewrite(sentence, context) {
-  const res = await fetch(`${API_BASE}/api/rewrite`, {
+  const res = await apiFetch('/api/rewrite', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sentence, context }),
@@ -469,7 +504,7 @@ async function apiRewrite(sentence, context) {
  * Expected response: { honed, improvements: [{original, improved, reason}] }
  */
 async function apiHone(text) {
-  const res = await fetch(`${API_BASE}/api/hone`, {
+  const res = await apiFetch('/api/hone', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
@@ -564,6 +599,7 @@ async function evaluate(force = false) {
     );
     saveActiveSession();
   } catch (err) {
+    if (err?.isSessionExpired) return;
     console.error('Evaluate error:', err);
     showToast('The scribes encountered an error. Try again.', 'error');
   } finally {
@@ -623,6 +659,7 @@ async function rewrite(force = false) {
       showToast('No sentences rewritten.', 'info');
     }
   } catch (err) {
+    if (err?.isSessionExpired) return;
     console.error('Rewrite error:', err);
     showToast('Rewrite failed. Try again.', 'error');
   } finally {
@@ -816,6 +853,7 @@ async function hone(force = false) {
     saveActiveSession();
     autoSaveEntry();
   } catch (err) {
+    if (err?.isSessionExpired) return;
     console.error('Hone error:', err);
     showToast('Honing failed. Try again.', 'error');
   } finally {
@@ -1033,7 +1071,7 @@ async function playTTS(text, element) {
       blob = audioCache.get(cacheKey);
     } else {
       try {
-        const res = await fetch(`${API_BASE}/api/tts`, {
+        const res = await apiFetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text })
@@ -1047,6 +1085,10 @@ async function playTTS(text, element) {
         blob = await res.blob();
         audioCache.set(cacheKey, blob);
       } catch (fetchErr) {
+        if (fetchErr?.isSessionExpired) {
+          cleanup();
+          return;
+        }
         console.warn('Backend TTS failed, trying browser SpeechSynthesis fallback:', fetchErr);
         // Verify user didn't click away or click another item during fetch
         if (currentAudioElement !== element) return;
@@ -1157,8 +1199,8 @@ function playSpeechSynthesisFallback(text, element) {
 
 
 /* --------------------------------------------------------------------------
-   9. LOCALSTORAGE PERSISTENCE
-   Journal entries are stored as a JSON array under STORAGE_KEY.
+   9. CLOUD PERSISTENCE & CACHE
+   Journal entries & active workspace state sync directly to SQLite backend.
    -------------------------------------------------------------------------- */
 
 /**
@@ -1168,88 +1210,48 @@ function generateId() {
   return Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
 }
 
-let _entriesCache = null;
+let _entriesCache = [];
+let _dirtyEntries = false;
+let _dirtySession = false;
+let _pendingActiveSession = null;
+let _cloudSyncTimer = null;
+let _syncInFlight = false;
+let _syncQueued = false;
 
-function createSeedEntry() {
-  return {
-    id: 'seed_crush_diary',
-    title: 'June 28, Sunday. Weather: Sunny day (晴天)',
-    customTitle: true,
-    text: DEFAULT_ENTRY_TEXT,
-    date: new Date().toISOString(),
-    wordCount: 142,
-  };
+function updateSyncIndicator(state) {
+  AppState.syncState = state;
+  const label = state === 'saving' ? 'Saving...' : (state === 'error' ? 'Sync error' : 'Saved');
+  if (DOM.syncStatus) {
+    DOM.syncStatus.dataset.state = state;
+    DOM.syncStatus.textContent = label;
+  }
+  if (DOM.mobileSyncStatus) {
+    DOM.mobileSyncStatus.dataset.state = state;
+    DOM.mobileSyncStatus.textContent = label;
+  }
 }
 
-/**
- * Initialize and return the in-memory journal entries cache (single v5 seed/migration).
- * @returns {Array}
- */
-function initEntriesCache() {
-  if (_entriesCache !== null) return _entriesCache;
-
-  let entries = null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-
-    if (!localStorage.getItem('rde_seeded_diary_v5')) {
-      localStorage.setItem('rde_seeded_diary_v5', 'true');
-      localStorage.removeItem('rde_active_session');
-      if (raw) {
-        entries = JSON.parse(raw).map((entry) =>
-          entry.id === 'seed_crush_diary' ? createSeedEntry() : entry
-        );
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-      }
-    }
-
-    if (!entries) {
-      if (!raw) {
-        entries = [createSeedEntry()];
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-        localStorage.setItem('rde_seeded_diary_v5', 'true');
-      } else {
-        entries = JSON.parse(raw || '[]');
-      }
-    }
-  } catch {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem('rde_active_session');
-    entries = [createSeedEntry()];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-    localStorage.setItem('rde_seeded_diary_v5', 'true');
-  }
-
-  _entriesCache = Array.isArray(entries) ? entries : [];
-  AppState.history = _entriesCache;
+function getEntries() {
   return _entriesCache;
 }
 
-/**
- * Retrieve all saved entries from cache / localStorage.
- * @returns {Array}
- */
-function getEntries() {
-  return initEntriesCache();
-}
-
-/**
- * Persist journal entries to localStorage and keep in-memory cache synchronized.
- */
 function persistEntries(entries) {
-  _entriesCache = entries;
+  _entriesCache = Array.isArray(entries) ? entries : [];
   AppState.history = _entriesCache;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  _dirtyEntries = true;
+  if (AppState.authenticated) {
+    updateSyncIndicator('saving');
+    scheduleCloudSync(250);
+  }
 }
 
-/**
- * Load a saved entry into the editor.
- */
-function loadEntry(id) {
-  flushAutoSaveIfPending();
+function loadEntry(id, options = {}) {
+  if (!options.skipFlush) {
+    flushAutoSaveIfPending();
+  }
   cancelPendingFixAnimations();
   if (AppState.inRewriteMode) {
-    exitRewriteMode();
+    exitRewriteMode(false);
   }
   if (AppState.inHoneMode) {
     exitHoneMode(false);
@@ -1277,15 +1279,16 @@ function loadEntry(id) {
   renderHighlights(entry.text || '', AppState.errors, AppState.appliedFixes);
   renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
   updateCounts();
-  renderHistory(); // Update active state
+  renderHistory();
 
-  // Close sidebar on mobile
   closeSidebars();
-  saveActiveSession();
+  if (!options.skipSync) {
+    saveActiveSession();
+  }
 }
 
 /**
- * Delete a saved entry.
+ * Delete a saved entry with undo support.
  */
 function deleteEntry(id) {
   cancelScheduledAutoSave();
@@ -1297,7 +1300,6 @@ function deleteEntry(id) {
   const wasCurrent = AppState.currentEntryId === id;
   persistEntries(entries.filter((e) => e.id !== id));
 
-  // If we just deleted the active entry, start a clean one without flushing deleted data
   if (wasCurrent) {
     newEntry(false, { skipFlush: true });
   }
@@ -1322,8 +1324,6 @@ function deleteEntry(id) {
 
 /**
  * Start a fresh new entry.
- * @param {boolean} isInit - If true and there are no entries, populates with DEFAULT_ENTRY_TEXT.
- *                           Otherwise, starts with a clean empty editor.
  */
 function newEntry(isInit = false, options = {}) {
   if (!options.skipFlush) {
@@ -1331,7 +1331,7 @@ function newEntry(isInit = false, options = {}) {
   }
   cancelPendingFixAnimations();
   if (AppState.inRewriteMode) {
-    exitRewriteMode();
+    exitRewriteMode(false);
   }
   if (AppState.inHoneMode) {
     exitHoneMode(false);
@@ -1357,9 +1357,13 @@ function newEntry(isInit = false, options = {}) {
   clearCorrections();
   renderHistory();
 
-  DOM.textarea.focus();
+  if (!options.skipFocus) {
+    DOM.textarea.focus();
+  }
   closeSidebars();
-  saveActiveSession();
+  if (!options.skipSync) {
+    saveActiveSession();
+  }
 }
 
 /**
@@ -2461,13 +2465,123 @@ function formatDate(isoString) {
 }
 
 /**
- * Save current active editor and evaluation state to localStorage.
+ * Cloud sync scheduling & active workspace session snapshot helpers.
  */
 let _sessionSaveTimer = null;
 let _autoSaveTimer = null;
 let _hasPendingAutoSave = false;
 
-function scheduleSaveActiveSession(delayMs = 350) {
+function buildActiveSessionSnapshot() {
+  return {
+    text: DOM.textarea ? DOM.textarea.value : '',
+    currentEntryId: AppState.currentEntryId,
+    errors: AppState.errors,
+    appliedFixes: AppState.appliedFixes,
+    overallScore: AppState.overallScore,
+    summary: AppState.summary,
+    correctionsSidebarOpen: AppState.correctionsSidebarOpen,
+    historySidebarOpen: AppState.historySidebarOpen,
+    inRewriteMode: AppState.inRewriteMode,
+    rewriteSentences: AppState.rewriteSentences,
+    rewriteOriginalText: AppState.rewriteOriginalText,
+    activeRewriteIndex: AppState.activeRewriteIndex,
+    inHoneMode: AppState.inHoneMode,
+    honedText: AppState.honedText,
+    honeImprovements: AppState.honeImprovements,
+    textBeforeHone: AppState.textBeforeHone,
+    errorsBeforeHone: AppState.errorsBeforeHone,
+    appliedFixesBeforeHone: AppState.appliedFixesBeforeHone,
+    overallScoreBeforeHone: AppState.overallScoreBeforeHone,
+    summaryBeforeHone: AppState.summaryBeforeHone,
+  };
+}
+
+function scheduleCloudSync(delayMs = 300) {
+  if (!AppState.authenticated) return;
+  clearTimeout(_cloudSyncTimer);
+  _cloudSyncTimer = setTimeout(() => {
+    _cloudSyncTimer = null;
+    syncToCloud();
+  }, delayMs);
+}
+
+async function syncToCloud({ unload = false } = {}) {
+  if (!AppState.authenticated) return;
+  if (!_dirtyEntries && !_dirtySession) return;
+
+  if (!unload && _syncInFlight) {
+    _syncQueued = true;
+    return;
+  }
+
+  const sendEntries = _dirtyEntries;
+  const sendSession = _dirtySession;
+  const payload = {};
+  if (sendEntries) payload.entries = _entriesCache;
+  if (sendSession) payload.active_session = _pendingActiveSession;
+
+  _dirtyEntries = false;
+  _dirtySession = false;
+
+  if (unload) {
+    clearTimeout(_cloudSyncTimer);
+    _cloudSyncTimer = null;
+    const bodyStr = JSON.stringify(payload);
+    let beaconSent = false;
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function' && typeof Blob !== 'undefined') {
+        const blob = new Blob([bodyStr], { type: 'application/json' });
+        beaconSent = navigator.sendBeacon(`${API_BASE}/api/state`, blob);
+      }
+    } catch (_) {
+      beaconSent = false;
+    }
+    if (!beaconSent) {
+      try {
+        fetch(`${API_BASE}/api/state`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr,
+          keepalive: true,
+        }).catch(() => {});
+      } catch (_) {}
+    }
+    return;
+  }
+
+  _syncInFlight = true;
+  updateSyncIndicator('saving');
+  try {
+    const res = await apiFetch('/api/state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      throw new Error(`Sync failed: ${res.status}`);
+    }
+    if (!_dirtyEntries && !_dirtySession) {
+      updateSyncIndicator('saved');
+    }
+  } catch (err) {
+    if (err?.isSessionExpired) return;
+    console.warn('Cloud sync failed:', err);
+    if (sendEntries) _dirtyEntries = true;
+    if (sendSession) _dirtySession = true;
+    updateSyncIndicator('error');
+  } finally {
+    _syncInFlight = false;
+    if (_syncQueued) {
+      _syncQueued = false;
+      if (AppState.authenticated && (_dirtyEntries || _dirtySession)) {
+        scheduleCloudSync(150);
+      }
+    }
+  }
+}
+
+function scheduleSaveActiveSession(delayMs = 500) {
   clearTimeout(_sessionSaveTimer);
   _sessionSaveTimer = setTimeout(() => {
     _sessionSaveTimer = null;
@@ -2498,13 +2612,14 @@ function flushAutoSaveIfPending() {
   }
 }
 
-function flushAllPendingSaves() {
+async function flushAllPendingSaves({ unload = false } = {}) {
   if (_sessionSaveTimer) {
     clearTimeout(_sessionSaveTimer);
     _sessionSaveTimer = null;
     saveActiveSession();
   }
   flushAutoSaveIfPending();
+  await syncToCloud({ unload });
 }
 
 function saveActiveSession() {
@@ -2512,41 +2627,22 @@ function saveActiveSession() {
     clearTimeout(_sessionSaveTimer);
     _sessionSaveTimer = null;
   }
-  const session = {
-    text: DOM.textarea ? DOM.textarea.value : '',
-    currentEntryId: AppState.currentEntryId,
-    errors: AppState.errors,
-    appliedFixes: AppState.appliedFixes,
-    overallScore: AppState.overallScore,
-    summary: AppState.summary,
-    correctionsSidebarOpen: AppState.correctionsSidebarOpen,
-    historySidebarOpen: AppState.historySidebarOpen,
-    inRewriteMode: AppState.inRewriteMode,
-    rewriteSentences: AppState.rewriteSentences,
-    rewriteOriginalText: AppState.rewriteOriginalText,
-    activeRewriteIndex: AppState.activeRewriteIndex,
-    inHoneMode: AppState.inHoneMode,
-    honedText: AppState.honedText,
-    honeImprovements: AppState.honeImprovements,
-    textBeforeHone: AppState.textBeforeHone,
-    errorsBeforeHone: AppState.errorsBeforeHone,
-    appliedFixesBeforeHone: AppState.appliedFixesBeforeHone,
-    overallScoreBeforeHone: AppState.overallScoreBeforeHone,
-    summaryBeforeHone: AppState.summaryBeforeHone
-  };
-  localStorage.setItem('rde_active_session', JSON.stringify(session));
+  _pendingActiveSession = buildActiveSessionSnapshot();
+  _dirtySession = true;
+  if (AppState.authenticated) {
+    updateSyncIndicator('saving');
+    scheduleCloudSync(300);
+  }
 }
 
 /**
- * Restore active editor and evaluation state from localStorage if it exists.
+ * Restore active editor and evaluation state from a cloud session snapshot.
  * @returns {boolean} true if session was restored, false otherwise
  */
-function restoreActiveSession() {
-  const dataStr = localStorage.getItem('rde_active_session');
-  if (!dataStr) return false;
+function restoreActiveSession(sessionData) {
+  if (!sessionData || typeof sessionData !== 'object') return false;
   try {
-    const session = JSON.parse(dataStr);
-    if (!session) return false;
+    const session = sessionData;
 
     if (DOM.textarea) DOM.textarea.value = session.text || '';
     AppState.currentEntryId = session.currentEntryId ?? null;
@@ -2812,6 +2908,14 @@ function removeMobilePopover() {
    -------------------------------------------------------------------------- */
 
 function setupEventListeners() {
+  DOM.authForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    loginWithUsername(DOM.authUsernameInput?.value || '');
+  });
+
+  DOM.btnLogout?.addEventListener('click', () => logout());
+  DOM.btnMobileLogout?.addEventListener('click', () => logout());
+
   // Dismiss mobile popover when clicking outside
   document.addEventListener('click', (e) => {
     const popover = document.body.querySelector('.mobile-popover');
@@ -2879,12 +2983,12 @@ function setupEventListeners() {
 
   // Flush debounced session/entry writes when leaving or hiding the page
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      flushAllPendingSaves();
+    if (document.visibilityState === 'hidden' && AppState.authenticated) {
+      flushAllPendingSaves({ unload: false });
     }
   });
-  window.addEventListener('pagehide', flushAllPendingSaves);
-  window.addEventListener('beforeunload', flushAllPendingSaves);
+  window.addEventListener('pagehide', () => flushAllPendingSaves({ unload: true }));
+  window.addEventListener('beforeunload', () => flushAllPendingSaves({ unload: true }));
 
   // Prevent iOS / mobile viewport scroll shifts when focusing/blurring editor
   DOM.textarea?.addEventListener('focus', () => {
@@ -3171,11 +3275,14 @@ function setupEventListeners() {
 
   // --- Keyboard shortcuts ---
   document.addEventListener('keydown', (e) => {
-    // Ctrl+S / Cmd+S — Save
+    if (!AppState.authenticated) return;
+
+    // Ctrl+S / Cmd+S — Save immediately to cloud
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
       autoSaveEntry();
-      showToast('Autosaved.', 'success');
+      flushAllPendingSaves({ unload: false });
+      showToast('Saved to cloud.', 'success');
     }
 
     // Ctrl+E / Cmd+E — Evaluate
@@ -3395,25 +3502,283 @@ function preloadMaryBethImages() {
 }
 
 /* --------------------------------------------------------------------------
-   17. INITIALIZATION
+   17. AUTHENTICATION & INITIALIZATION
    -------------------------------------------------------------------------- */
 
-document.addEventListener('DOMContentLoaded', () => {
-  initDOMReferences();
-  updateCounts();
+function showAuthError(message) {
+  if (!DOM.authError) return;
+  if (!message) {
+    DOM.authError.textContent = '';
+    DOM.authError.hidden = true;
+  } else {
+    DOM.authError.textContent = message;
+    DOM.authError.hidden = false;
+  }
+}
 
-  const entries = initEntriesCache();
-  const restored = restoreActiveSession();
-  if (entries.length === 0) {
-    newEntry(true);
+function setAuthFormVisible(visible, errorMessage = '') {
+  if (DOM.authChecking) DOM.authChecking.hidden = visible;
+  if (DOM.authForm) DOM.authForm.hidden = !visible;
+  showAuthError(errorMessage);
+  if (visible && DOM.authUsernameInput) {
+    setTimeout(() => DOM.authUsernameInput?.focus(), 0);
+  }
+}
+
+function resetWorkspaceUI() {
+  cancelPendingFixAnimations();
+  cancelScheduledAutoSave();
+  clearTimeout(_sessionSaveTimer);
+  clearTimeout(_cloudSyncTimer);
+  _sessionSaveTimer = null;
+  _cloudSyncTimer = null;
+  _dirtyEntries = false;
+  _dirtySession = false;
+  _pendingActiveSession = null;
+  _entriesCache = [];
+
+  stopCurrentAudio();
+
+  AppState.currentEntryId = null;
+  AppState.errors = [];
+  AppState.appliedFixes = [];
+  AppState.history = [];
+  AppState.isLoading = false;
+  AppState.activeOperation = null;
+  AppState.overallScore = null;
+  AppState.summary = '';
+  AppState.lastRestoredError = null;
+  AppState.inRewriteMode = false;
+  AppState.rewriteSentences = [];
+  AppState.rewriteOriginalText = null;
+  AppState.activeRewriteIndex = null;
+  AppState.honedText = null;
+  AppState.honeImprovements = [];
+  AppState.inHoneMode = false;
+  AppState.evaluatedOnce = false;
+  AppState.rewrittenOnce = false;
+  AppState.honedOnce = false;
+  AppState.textBeforeHone = null;
+  AppState.errorsBeforeHone = [];
+  AppState.appliedFixesBeforeHone = [];
+  AppState.overallScoreBeforeHone = null;
+  AppState.summaryBeforeHone = '';
+
+  if (DOM.textarea) {
+    DOM.textarea.value = '';
+    DOM.textarea.readOnly = false;
+  }
+  if (DOM.highlightLayer) {
+    DOM.highlightLayer.textContent = '';
+    DOM.highlightLayer.setAttribute('aria-hidden', 'true');
+  }
+  if (DOM.rewriteBanner) DOM.rewriteBanner.style.display = 'none';
+  if (DOM.honeBanner) DOM.honeBanner.style.display = 'none';
+  DOM.journalContainer?.classList.remove('view-rewrite', 'view-hone');
+  if (DOM.historyList) DOM.historyList.innerHTML = '';
+  clearCorrections();
+  updateCounts();
+  closeSidebars();
+  removeMobilePopover();
+}
+
+function lockWorkspace(errorMessage = '') {
+  AppState.authenticated = false;
+  AppState.username = null;
+  resetWorkspaceUI();
+  if (DOM.headerUser) DOM.headerUser.hidden = true;
+  if (DOM.sidebarAccountRow) DOM.sidebarAccountRow.hidden = true;
+  if (DOM.headerUsername) DOM.headerUsername.textContent = '';
+  if (DOM.mobileUsername) DOM.mobileUsername.textContent = '';
+  document.body?.classList?.add('auth-locked');
+  setAuthFormVisible(true, errorMessage);
+}
+
+function handleSessionExpired() {
+  if (!AppState.authenticated) return;
+  lockWorkspace('Your session expired. Sign in again to continue.');
+}
+
+/**
+ * If this account still has its untouched onboarding seed and the browser
+ * holds older non-default localStorage drafts, migrate them to the cloud once,
+ * then always wipe legacy browser storage keys.
+ */
+function migrateAndClearLegacyLocalStorage(serverData) {
+  let adopted = false;
+  if (typeof localStorage === 'undefined') {
+    return { entries: serverData.entries, activeSession: serverData.active_session, adopted };
+  }
+
+  let legacyEntries = null;
+  let legacySession = null;
+  try {
+    const rawEntries = localStorage.getItem('rdo_entries');
+    const rawSession = localStorage.getItem('rde_active_session');
+    if (rawEntries) {
+      const parsed = JSON.parse(rawEntries);
+      if (Array.isArray(parsed)) legacyEntries = parsed;
+    }
+    if (rawSession) {
+      const parsedS = JSON.parse(rawSession);
+      if (parsedS && typeof parsedS === 'object') legacySession = parsedS;
+    }
+
+    const hasCustomEntries = Array.isArray(legacyEntries) && (
+      legacyEntries.length !== 1 ||
+      legacyEntries[0]?.id !== 'seed_crush_diary' ||
+      legacyEntries[0]?.text !== DEFAULT_ENTRY_TEXT
+    );
+    const hasCustomSession = !!(legacySession && (
+      legacySession.text !== DEFAULT_ENTRY_TEXT ||
+      (legacySession.errors && legacySession.errors.length > 0) ||
+      (legacySession.appliedFixes && legacySession.appliedFixes.length > 0) ||
+      (legacySession.rewriteSentences && legacySession.rewriteSentences.length > 0) ||
+      legacySession.honedText
+    ));
+
+    if (serverData.is_fresh_seed && (hasCustomEntries || hasCustomSession)) {
+      adopted = true;
+      return {
+        entries: legacyEntries && legacyEntries.length > 0 ? legacyEntries : serverData.entries,
+        activeSession: legacySession || serverData.active_session,
+        adopted: true,
+      };
+    }
+  } catch (_) {
+    // Ignore corrupt legacy storage
+  } finally {
+    try {
+      localStorage.removeItem('rdo_entries');
+      localStorage.removeItem('rde_active_session');
+      localStorage.removeItem('rde_seeded_diary_v5');
+    } catch (_) {}
+  }
+
+  return {
+    entries: serverData.entries,
+    activeSession: serverData.active_session,
+    adopted,
+  };
+}
+
+function hydrateWorkspaceFromServer(data) {
+  AppState.authenticated = true;
+  AppState.username = data.username || '';
+
+  if (DOM.headerUsername) DOM.headerUsername.textContent = AppState.username;
+  if (DOM.mobileUsername) DOM.mobileUsername.textContent = AppState.username;
+  if (DOM.headerUser) DOM.headerUser.hidden = false;
+  if (DOM.sidebarAccountRow) DOM.sidebarAccountRow.hidden = false;
+  updateSyncIndicator('saved');
+
+  document.body?.classList?.remove('auth-locked');
+  showAuthError('');
+
+  const { entries, activeSession, adopted } = migrateAndClearLegacyLocalStorage(data);
+  _entriesCache = Array.isArray(entries) ? entries : [];
+  AppState.history = _entriesCache;
+
+  const restored = restoreActiveSession(activeSession);
+  if (_entriesCache.length === 0 && !restored) {
+    newEntry(false, { skipFlush: true, skipSync: true, skipFocus: true });
   } else if (!restored) {
-    loadEntry(entries[0].id);
+    loadEntry(_entriesCache[0].id, { skipFlush: true, skipSync: true });
   } else {
     renderHistory();
   }
 
+  updateButtonStates();
+  updateCounts();
+
+  if (adopted) {
+    _dirtyEntries = true;
+    _pendingActiveSession = activeSession || buildActiveSessionSnapshot();
+    _dirtySession = true;
+    syncToCloud();
+    showToast('Synced previous browser entries to your cloud account.', 'info');
+  }
+}
+
+async function loginWithUsername(rawUsername) {
+  const trimmed = (rawUsername || '').trim();
+  if (!trimmed) {
+    showAuthError('Please enter your username.');
+    DOM.authUsernameInput?.focus();
+    return;
+  }
+
+  if (DOM.btnAuthSubmit) {
+    DOM.btnAuthSubmit.disabled = true;
+    DOM.btnAuthSubmit.textContent = 'Unlocking...';
+  }
+  showAuthError('');
+
+  try {
+    const res = await apiFetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: trimmed }),
+      skipAuthCheck: true,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.authenticated) {
+      showAuthError(data.detail || 'Unrecognized username.');
+      DOM.authUsernameInput?.focus();
+      DOM.authUsernameInput?.select();
+      return;
+    }
+    if (DOM.authUsernameInput) DOM.authUsernameInput.value = '';
+    hydrateWorkspaceFromServer(data);
+    showToast(`Welcome back, ${data.username}.`, 'success');
+  } catch (err) {
+    console.error('Login error:', err);
+    showAuthError('Could not connect to server. Please try again.');
+  } finally {
+    if (DOM.btnAuthSubmit) {
+      DOM.btnAuthSubmit.disabled = false;
+      DOM.btnAuthSubmit.textContent = 'Unlock Journal';
+    }
+  }
+}
+
+async function logout() {
+  if (AppState.authenticated) {
+    await flushAllPendingSaves({ unload: false });
+  }
+  try {
+    await apiFetch('/api/auth/logout', { method: 'POST', skipAuthCheck: true });
+  } catch (_) {}
+  lockWorkspace('');
+  showToast('Signed out.', 'info');
+}
+
+async function checkInitialSession() {
+  setAuthFormVisible(false, '');
+  try {
+    const res = await apiFetch('/api/auth/me', { method: 'GET', skipAuthCheck: true });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    if (data && data.authenticated) {
+      hydrateWorkspaceFromServer(data);
+    } else {
+      setAuthFormVisible(true, '');
+    }
+  } catch (err) {
+    console.error('Initial auth check failed:', err);
+    setAuthFormVisible(true, 'Could not reach server. Please try signing in.');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initDOMReferences();
+  updateCounts();
   setupEventListeners();
   updateButtonStates();
+
+  checkInitialSession();
 
   // Warm small Mary-Beth sprites only after initial load goes idle
   window.addEventListener('load', () => {

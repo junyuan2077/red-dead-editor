@@ -14,9 +14,9 @@
   <!-- Preload critical UI font (WOFF2) -->
   <link rel="preload" href="assets/red.woff2" as="font" type="font/woff2" crossorigin>
 
-  <link rel="stylesheet" href="style.css?v=20261125">
+  <link rel="stylesheet" href="style.css?v=20261125-auth1">
 </head>
-<body>
+<body class="auth-locked">
 
   <!-- =====================================================
        APP HEADER — Fixed top bar with title and mobile toggles
@@ -37,6 +37,13 @@
       <p class="header-subtitle">English Writing Practice · Est. 1899</p>
     </div>
 
+
+    <!-- Authenticated user status & sign out (desktop) -->
+    <div class="header-user" id="header-user" hidden>
+      <span class="sync-status" id="sync-status" data-state="saved" title="Cloud sync status">Saved</span>
+      <span class="header-username" id="header-username"></span>
+      <button class="btn-logout" id="btn-logout" type="button" title="Sign out">Sign Out</button>
+    </div>
 
     <!-- Right toggle: opens corrections sidebar on mobile -->
     <button class="sidebar-toggle corrections-toggle" id="corrections-toggle-btn" aria-label="Toggle corrections panel">
@@ -93,6 +100,13 @@
           </svg>
           New Entry
         </button>
+        <div class="sidebar-account-row" id="sidebar-account-row" hidden>
+          <div class="sidebar-account-meta">
+            <span class="header-username" id="mobile-username"></span>
+            <span class="sync-status" id="mobile-sync-status" data-state="saved">Saved</span>
+          </div>
+          <button class="btn-logout" id="btn-mobile-logout" type="button">Sign Out</button>
+        </div>
       </div>
     </aside>
 
@@ -216,10 +230,44 @@
   <!-- Mobile sidebar backdrop overlay -->
   <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
+  <!-- Invite-only Authentication Gate -->
+  <div class="auth-gate" id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+    <div class="auth-card">
+      <div class="auth-card-stripe" aria-hidden="true"></div>
+      <h2 class="auth-title" id="auth-title">RED DEAD EDITOR</h2>
+      <p class="auth-subtitle">Private Frontier Ledger · Est. 1899</p>
+
+      <div class="auth-checking" id="auth-checking">
+        <span class="auth-spinner" aria-hidden="true"></span>
+        <span>Verifying ledger access...</span>
+      </div>
+
+      <form class="auth-form" id="auth-form" hidden>
+        <label class="auth-label" for="auth-username-input">Account Username</label>
+        <input
+          class="auth-input"
+          id="auth-username-input"
+          name="username"
+          type="text"
+          placeholder="Enter your username..."
+          autocomplete="username"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          maxlength="64"
+          required
+        >
+        <p class="auth-error" id="auth-error" role="alert" hidden></p>
+        <button class="btn btn-auth-submit" id="btn-auth-submit" type="submit">Unlock Journal</button>
+        <p class="auth-footnote">Invite-only cloud workspace · Entries sync automatically</p>
+      </form>
+    </div>
+  </div>
+
   <!-- Toast notification container -->
   <div class="toast-container" id="toast-container"></div>
 
   <!-- App logic -->
-  <script src="app.js?v=20261125" defer></script>
+  <script src="app.js?v=20261125-auth1" defer></script>
 </body>
 </html>

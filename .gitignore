@@ -25,3 +25,9 @@ shot_*
 plan.md
 agy.md
 diff.txt
+
+# Cloud user database
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

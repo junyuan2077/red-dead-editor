@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 import wave
 from typing import Literal
 
@@ -366,6 +367,28 @@ def _build_thinking_config(level: str | None) -> types.ThinkingConfig | None:
     return types.ThinkingConfig(thinking_level=thinking_level)
 
 
+_TRANSIENT_TOKENS = ("503", "504", "unavailable", "deadline_exceeded", "timed out", "connection reset", "temporarily")
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return True
+    msg = str(exc).lower()
+    return any(tok in msg for tok in _TRANSIENT_TOKENS)
+
+
+def _call_with_retry(fn):
+    """Call a Gemini SDK operation once, retrying once on transient network/5xx errors."""
+    try:
+        return fn()
+    except Exception as exc:
+        if not _is_transient_error(exc):
+            raise
+        logger.warning("Transient Gemini error (%s); retrying once...", exc)
+        time.sleep(0.5)
+        return fn()
+
+
 def _generate_json(
     *,
     model: str,
@@ -381,16 +404,21 @@ def _generate_json(
         "system_instruction": system_prompt,
         "response_mime_type": "application/json",
         "response_schema": response_schema,
+        "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
     }
     thinking_config = _build_thinking_config(thinking_level)
     if thinking_config is not None:
         config_kwargs["thinking_config"] = thinking_config
 
     try:
-        response = client.models.generate_content(
-            model=model,
-            contents=f"Text:\n\"\"\"\n{text}\n\"\"\"",
-            config=types.GenerateContentConfig(**config_kwargs),
+        config = types.GenerateContentConfig(**config_kwargs)
+        contents = f"Text:\n\"\"\"\n{text}\n\"\"\""
+        response = _call_with_retry(
+            lambda: client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config,
+            )
         )
         raw_text = (response.text or "").strip()
         if not raw_text:
@@ -486,19 +514,24 @@ def synthesize_speech(text: str) -> tuple[bytes, str]:
         part_metadata={"style": style} if style else None,
     )
 
-    response = client.models.generate_content(
-        model=TTS_MODEL,
-        contents=types.Content(role="user", parts=[part]),
-        config=types.GenerateContentConfig(
-            response_modalities=["AUDIO"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=TTS_VOICE,
-                    )
+    tts_contents = types.Content(role="user", parts=[part])
+    tts_config = types.GenerateContentConfig(
+        response_modalities=["AUDIO"],
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=TTS_VOICE,
                 )
-            ),
+            )
         ),
+    )
+    response = _call_with_retry(
+        lambda: client.models.generate_content(
+            model=TTS_MODEL,
+            contents=tts_contents,
+            config=tts_config,
+        )
     )
 
     for candidate in response.candidates or []:

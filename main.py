@@ -12,16 +12,18 @@ Serves:
 
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 import logging
 import os
 from pathlib import Path
 import threading
+import time
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -39,6 +41,12 @@ FRONTEND_DIR: str = os.path.join(BASE_DIR, "frontend")
 TTS_CACHE_MAX_ITEMS: int = int(os.getenv("TTS_CACHE_MAX_ITEMS", "32"))
 _tts_cache: OrderedDict[str, bytes] = OrderedDict()
 _tts_cache_lock = threading.Lock()
+
+RATE_LIMIT_PER_MIN: int = int(os.getenv("RATE_LIMIT_PER_MIN", "20"))
+RATE_LIMIT_WINDOW_S: float = 60.0
+_RATE_LIMITED_PATHS = {"/api/evaluate", "/api/rewrite", "/api/hone", "/api/tts"}
+_rate_limit_hits: dict[str, deque[float]] = {}
+_rate_limit_lock = threading.Lock()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -63,10 +71,62 @@ app = FastAPI(
     openapi_url=None,
 )
 
-# Restrict CORS to the production origin only.
+def _get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else "unknown"
+
+
+@app.middleware("http")
+async def api_guard_and_timing(request: Request, call_next):
+    """Enforce per-IP sliding-window rate limits on AI routes and log API latency."""
+    path = request.url.path
+    if path in _RATE_LIMITED_PATHS and request.method == "POST":
+        client_ip = _get_client_ip(request)
+        now = time.monotonic()
+        cutoff = now - RATE_LIMIT_WINDOW_S
+        with _rate_limit_lock:
+            if len(_rate_limit_hits) > 512:
+                stale_ips = [ip for ip, q in _rate_limit_hits.items() if not q or q[-1] <= cutoff]
+                for ip in stale_ips:
+                    del _rate_limit_hits[ip]
+            timestamps = _rate_limit_hits.get(client_ip)
+            if timestamps is None:
+                timestamps = deque()
+                _rate_limit_hits[client_ip] = timestamps
+            while timestamps and timestamps[0] <= cutoff:
+                timestamps.popleft()
+            if len(timestamps) >= RATE_LIMIT_PER_MIN:
+                logger.warning("Rate limit exceeded for %s on %s", client_ip, path)
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many requests. Please wait a moment, partner."},
+                )
+            timestamps.append(now)
+
+    if path.startswith("/api/"):
+        t0 = time.perf_counter()
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        logger.info("%s %s -> %d (%.0fms)", request.method, path, response.status_code, elapsed_ms)
+        return response
+
+    return await call_next(request)
+
+
+# Compress JSON/static responses on fallback / direct origins, with CORS outermost.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://mary-beth.help"],
+    allow_origins=[
+        "https://mary-beth.help",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -117,7 +177,8 @@ def evaluate_text_endpoint(req: EvaluateRequest) -> dict:
     raw_results = gemini_bridge.evaluate_text(req.text)
     
     if isinstance(raw_results, dict) and "error" in raw_results:
-        raise HTTPException(status_code=500, detail=raw_results["error"])
+        logger.error("Gemini error on %s: %s", req.__class__.__name__, raw_results["error"])
+        raise HTTPException(status_code=500, detail="AI service is temporarily unavailable. Please try again.")
         
     errors = []
     if isinstance(raw_results, list):
@@ -153,7 +214,8 @@ def rewrite_sentence(req: RewriteRequest) -> dict:
     raw_results = gemini_bridge.rewrite_text(req.sentence)
     
     if isinstance(raw_results, dict) and "error" in raw_results:
-        raise HTTPException(status_code=500, detail=raw_results["error"])
+        logger.error("Gemini error on %s: %s", req.__class__.__name__, raw_results["error"])
+        raise HTTPException(status_code=500, detail="AI service is temporarily unavailable. Please try again.")
         
     rewritten = req.sentence
     sentences = []
@@ -185,7 +247,8 @@ def hone_text(req: HoneRequest) -> dict:
     raw_results = gemini_bridge.hone_text(req.text)
     
     if isinstance(raw_results, dict) and "error" in raw_results:
-        raise HTTPException(status_code=500, detail=raw_results["error"])
+        logger.error("Gemini error on %s: %s", req.__class__.__name__, raw_results["error"])
+        raise HTTPException(status_code=500, detail="AI service is temporarily unavailable. Please try again.")
         
     honed = req.text
     improvements = []

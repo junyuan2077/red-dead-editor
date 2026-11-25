@@ -9,7 +9,8 @@
 
 @font-face {
   font-family: 'RedDead';
-  src: url('assets/red.woff') format('woff');
+  src: url('assets/red.woff2') format('woff2'),
+       url('assets/red.woff') format('woff');
   font-weight: normal;
   font-style: normal;
   font-display: swap;
@@ -17,7 +18,8 @@
 
 @font-face {
   font-family: 'RedDeadText';
-  src: url('assets/redT.woff') format('woff');
+  src: url('assets/redT.woff2') format('woff2'),
+       url('assets/redT.woff') format('woff');
   font-weight: normal;
   font-style: normal;
   font-display: swap;
@@ -114,7 +116,7 @@ html {
 }
 
 body {
-  font-family: 'Lora', 'Georgia', 'Times New Roman', serif;
+  font-family: 'Georgia', 'Iowan Old Style', 'Times New Roman', serif;
   font-size: 16px;
   line-height: 1.6;
   color: var(--text-light);
@@ -176,7 +178,7 @@ body::before {
       rgba(var(--bg-deep-rgb), 0.45) 50%,
       rgba(var(--bg-deep-rgb), 0.65) 100%
     ),
-    url('assets/background.jpg') center / cover no-repeat;
+    url('assets/background.webp') center / cover no-repeat;
   background-color: var(--bg-deep);
 }
 
@@ -209,9 +211,7 @@ body::after {
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--space-lg);
-  background: rgba(var(--bg-deep-rgb), 0.88);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(var(--bg-deep-rgb), 0.94);
   border-bottom: 1px solid rgba(199, 164, 74, 0.12);
 }
 
@@ -223,7 +223,7 @@ body::after {
   left: 0;
   right: 0;
   height: 4px;
-  background: url('assets/texturedRed.png') repeat-x center / auto 100%;
+  background: url('assets/texturedRed.webp') repeat-x center / auto 100%;
   opacity: 0.7;
 }
 
@@ -245,59 +245,13 @@ body::after {
 }
 
 .header-subtitle {
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: clamp(0.7rem, 1.6vw, 0.85rem);
   color: var(--text-muted);
   letter-spacing: 0.25em;
   text-transform: uppercase;
   opacity: 0.7;
   margin-top: 3px;
-}
-
-/* Gallery link button in Header */
-.gallery-header-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: 8px 16px;
-  background: rgba(199, 164, 74, 0.08);
-  border: 1px solid rgba(199, 164, 74, 0.2);
-  border-radius: var(--radius-md);
-  color: var(--gold);
-  text-decoration: none;
-  font-family: 'RedDeadText', 'Lora', serif;
-  font-size: 0.85rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  transition: all var(--transition-fast);
-  cursor: pointer;
-  z-index: 102;
-}
-
-.gallery-header-btn:hover {
-  background: rgba(199, 164, 74, 0.18);
-  border-color: var(--gold);
-  color: var(--gold-light);
-  box-shadow: 0 0 12px rgba(199, 164, 74, 0.2);
-}
-
-.gallery-btn-icon {
-  transition: transform var(--transition-fast);
-}
-
-.gallery-header-btn:hover .gallery-btn-icon {
-  transform: scale(1.1);
-}
-
-@media (max-width: 768px) {
-  .gallery-header-btn {
-    position: absolute;
-    right: 70px;
-    padding: var(--space-sm);
-  }
-  .gallery-header-btn span {
-    display: none;
-  }
 }
 
 /* Sidebar toggle buttons — hidden on desktop, shown on mobile */
@@ -315,55 +269,6 @@ body::after {
 .sidebar-toggle:hover {
   color: var(--gold);
   background: rgba(199, 164, 74, 0.1);
-}
-
-/* --------------------------------------------------------------------------
-   5b. MARY-BETH AVATAR
-   Sits on the right side of the header, overflowing into the main body.
-   -------------------------------------------------------------------------- */
-
-.marybeth-avatar {
-  position: absolute;
-  right: 36px;
-  bottom: 8px; /* Sits cleanly inside the header, above the red line */
-  z-index: 101; /* Above the header and its ::after stripe */
-  width: 60px;   /* Scaled down to fit within a 90px header height */
-  height: 80px;
-  pointer-events: none;
-  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.4))
-          drop-shadow(0 0 15px rgba(199, 164, 74, 0.1));
-  transition: filter var(--transition-base);
-}
-
-.marybeth-sprite {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  object-position: bottom center;
-  animation: marybeth-breathe 4s ease-in-out infinite;
-  transition: opacity 0.3s ease;
-}
-
-/* Gentle breathing / idle bob */
-@keyframes marybeth-breathe {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-3px); }
-}
-
-/* Pose transition: brief fade */
-.marybeth-sprite.pose-swap {
-  opacity: 0;
-  transform: translateY(2px);
-}
-
-/* Active action pose — pause the breathing, subtle glow */
-.marybeth-avatar.pose-active .marybeth-sprite {
-  animation: none;
-}
-
-.marybeth-avatar.pose-active {
-  filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.6))
-          drop-shadow(0 0 24px rgba(199, 164, 74, 0.25));
 }
 
 /* --------------------------------------------------------------------------
@@ -409,7 +314,7 @@ body::after {
 }
 
 .sidebar-title {
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 1rem;
   font-weight: normal;
   color: var(--gold);
@@ -420,7 +325,7 @@ body::after {
   padding-bottom: var(--space-md);
   /* Textured yellow underline */
   border-bottom: 3px solid transparent;
-  background-image: url('assets/texturedYellow.png');
+  background-image: url('assets/texturedYellow.webp');
   background-repeat: no-repeat;
   background-position: bottom left;
   background-size: 100% 3px;
@@ -493,7 +398,7 @@ body::after {
 }
 
 .history-item-title {
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--parchment);
@@ -558,7 +463,7 @@ body::after {
   justify-content: center;
   gap: var(--space-sm);
   padding: var(--space-md);
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.85rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -601,7 +506,7 @@ body::after {
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -647,49 +552,77 @@ body::after {
   color: var(--parchment-dark);
 }
 
-/* --- Journal container: the transparent writing surface --- */
+/* --- Journal container: the weathered writing surface --- */
 .journal-container {
   position: relative;
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border-radius: var(--radius-lg);
   box-shadow:
     var(--shadow-lg),
-    var(--shadow-inset),
     0 0 0 1px rgba(199, 164, 74, 0.15);
-
-  /* Semi-transparent dark slate background to allow background.jpg to show through */
-  background-color: rgba(26, 18, 16, 0.65);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  background-image:
-    /* Subtle grain noise (CSS only); ruled lines live on .editor-textarea with background-attachment: local */
-    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
-  background-position: 0 0;
+  background-color: rgba(24, 17, 15, 0.84);
 }
 
-/* Aged edge effect on the writing surface */
+/* Aged edge vignette on the writing surface (zero-blur gradient) */
 .journal-container::before {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: var(--radius-lg);
-  box-shadow:
-    inset 0 0 60px rgba(0, 0, 0, 0.45),
-    inset 0 0 120px rgba(0, 0, 0, 0.3);
+  background: radial-gradient(
+    ellipse at center,
+    transparent 55%,
+    rgba(0, 0, 0, 0.42) 100%
+  );
   pointer-events: none;
-  z-index: 3;
+  z-index: 5;
 }
 
-/* --- Shared text styling for overlay sync --- */
+/* Single shared scroll viewport for textarea and highlight overlay */
+.editor-scroll {
+  position: relative;
+  flex: 1 1 0%;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.editor-surface {
+  position: relative;
+  flex: 1 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent calc(var(--editor-line-height) - 1px),
+    rgba(199, 164, 74, 0.08) calc(var(--editor-line-height) - 1px),
+    rgba(199, 164, 74, 0.08) var(--editor-line-height)
+  );
+  background-attachment: scroll;
+  background-position: 0 var(--editor-line-offset);
+}
+
+/* --- Shared text styling for zero-drift overlay sync --- */
 .highlight-layer,
 .editor-textarea {
-  position: absolute;
-  inset: 0;
+  grid-area: 1 / 1;
   width: 100%;
   height: 100%;
+  min-height: 100%;
   font-family: 'RedDead', 'Georgia', serif;
-  font-size: 1.3em; /* Increased textarea and highlight-layer font size to 1.3em */
+  font-size: 1.3em;
   line-height: var(--editor-line-height);
   padding: var(--space-lg);
   padding-top: 28px; /* align with ruled lines */
@@ -698,14 +631,14 @@ body::after {
   white-space: pre-wrap;
   letter-spacing: 0.01em;
   border: none;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 /* Highlight layer: text is invisible, only marks show */
 .highlight-layer {
   color: transparent;
   pointer-events: none;
-  z-index: 4; /* Overlay on top of textarea to capture events on children */
+  z-index: 4; /* Overlay on top of textarea to capture clicks on <mark> badges */
   user-select: none;
   -webkit-user-select: none;
 }
@@ -719,7 +652,6 @@ body::after {
   position: relative;
   pointer-events: auto !important; /* capture pointer events */
   cursor: pointer;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast);
 }
 
 .highlight-layer mark.mark-applied-fix:hover {
@@ -727,24 +659,14 @@ body::after {
   border-bottom-color: var(--gold-light);
 }
 
-/* Textarea: transparent background with local-scrolling ruled lines */
+/* Textarea: transparent surface over shared .editor-surface ruled lines */
 .editor-textarea {
   background-color: transparent;
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent,
-    transparent calc(var(--editor-line-height) - 1px),
-    rgba(199, 164, 74, 0.08) calc(var(--editor-line-height) - 1px),
-    rgba(199, 164, 74, 0.08) var(--editor-line-height)
-  );
-  background-attachment: local;
-  background-position: 0 var(--editor-line-offset);
   color: #f5f5f0; /* Chalk white */
   caret-color: var(--gold);
   resize: none;
   outline: none;
   z-index: 2;
-  /* Match the highlight layer exactly */
 }
 
 .editor-textarea:read-only {
@@ -766,7 +688,6 @@ body::after {
   border-radius: 2px;
   padding: 0;
   position: relative;
-  transition: background-color var(--transition-fast);
   pointer-events: auto; /* Allow clicks/taps on mobile viewports */
 }
 
@@ -819,10 +740,9 @@ body::after {
   align-items: center;
   justify-content: center;
   gap: var(--space-lg);
-  background: rgba(var(--bg-deep-rgb), 0.82);
-  backdrop-filter: blur(4px);
+  background: rgba(var(--bg-deep-rgb), 0.9);
   border-radius: var(--radius-lg);
-  animation: fadeIn 0.3s ease;
+  animation: fadeIn 0.25s ease;
 }
 
 .loading-overlay.visible {
@@ -831,15 +751,14 @@ body::after {
 
 .loading-overlay .marybeth-avatar {
   position: relative;
-  right: auto;
-  bottom: auto;
   z-index: 2;
-  width: 140px;  /* fit size - appropriate size to display Mary-Beth inside the text area overlay */
+  width: 140px;
   height: 187px; /* 3:4 aspect ratio */
-  display: block !important; /* Ensure it is always shown even if global media queries try to hide it */
+  display: block;
   margin-bottom: var(--space-xs);
   pointer-events: none;
-  opacity: 0.94; /* Deeper integration with background texture */
+  opacity: 0.94;
+  transition: filter var(--transition-base);
 }
 
 .loading-overlay .marybeth-sprite {
@@ -847,9 +766,20 @@ body::after {
   height: 100%;
   object-fit: contain;
   object-position: bottom center;
+  animation: marybeth-breathe 4s ease-in-out infinite;
   filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5))
           sepia(25%) contrast(1.05) brightness(0.88);
-  transition: opacity 0.3s ease;
+  transition: opacity 0.25s ease;
+}
+
+@keyframes marybeth-breathe {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+
+.marybeth-sprite.pose-swap {
+  opacity: 0;
+  transform: translateY(2px);
 }
 
 /* Custom dynamic waiting/fidgeting state */
@@ -886,7 +816,7 @@ body::after {
 }
 
 .loading-text {
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.95rem;
   color: var(--gold-light);
   letter-spacing: 0.1em;
@@ -903,9 +833,7 @@ body::after {
 .journal-footer {
   display: flex;
   flex-shrink: 0;
-  background: rgba(var(--bg-deep-rgb), 0.72);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: rgba(var(--bg-deep-rgb), 0.9);
   border-radius: var(--radius-lg);
   border: 1px solid rgba(199, 164, 74, 0.1);
   box-shadow:
@@ -940,7 +868,7 @@ body::after {
   justify-content: center;
   gap: var(--space-sm);
   padding: var(--space-md) var(--space-lg);
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.78rem;
   font-weight: 500;
   text-transform: uppercase;
@@ -1049,36 +977,6 @@ body::after {
 
 .btn-hone .btn-icon svg { stroke: currentColor; }
 
-/* --- Save — parchment accent --- */
-.btn-save {
-  color: var(--parchment-dark);
-}
-
-.btn-save:hover:not(:disabled) {
-  color: var(--ink);
-  background: var(--parchment);
-  border-color: var(--parchment-dark);
-  box-shadow: 0 0 14px rgba(212, 196, 160, 0.15);
-}
-
-.btn-save .btn-icon svg { stroke: currentColor; }
-
-/* --- Loading state --- */
-.btn--loading {
-  pointer-events: none;
-}
-
-.btn--loading::after {
-  content: '';
-  position: absolute;
-  width: 18px;
-  height: 18px;
-  border: 2px solid transparent;
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
 /* --------------------------------------------------------------------------
    11. CORRECTIONS SIDEBAR — Score, Cards, TTS
    -------------------------------------------------------------------------- */
@@ -1118,7 +1016,7 @@ body::after {
 .btn-apply-all {
   flex: 0 0 auto;
   padding: 5px 12px;
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1151,55 +1049,61 @@ body::after {
 
 .correction-card {
   position: relative;
-  background: rgba(var(--bg-deep-rgb), 0.6);
-  border: 1px solid rgba(199, 164, 74, 0.1);
+  background: rgba(var(--bg-deep-rgb), 0.72);
+  border: 1px solid rgba(199, 164, 74, 0.14);
+  border-left: 3px solid transparent;
   border-radius: var(--radius-md);
   padding: var(--space-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  contain: layout style;
-  transition: border-color var(--transition-fast);
-}
-
-/* GPU-composited glow layer (animates opacity instead of re-rasterizing box-shadow each frame) */
-.correction-card::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  pointer-events: none;
-  box-shadow: 0 0 18px rgba(199, 164, 74, 0.25);
-  opacity: 0;
-  will-change: opacity;
-  transition: opacity var(--transition-fast);
+  contain: layout style paint;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
 }
 
 .corrections-list.stagger-in .correction-card {
-  animation: slideUpFade 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: slideUpFade 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .correction-card:hover {
-  border-color: rgba(199, 164, 74, 0.28);
-}
-
-.correction-card:hover::after {
-  opacity: 0.65;
+  border-color: rgba(199, 164, 74, 0.4);
+  border-left-color: var(--gold-dim);
+  background: rgba(38, 27, 24, 0.88);
 }
 
 .correction-card.card-active {
   border-color: var(--gold);
+  border-left-color: var(--gold-light);
+  background: rgba(46, 33, 27, 0.94);
 }
 
-.correction-card.card-active::after {
-  opacity: 1;
+.correction-card.card-exiting {
+  pointer-events: none;
+  transform: translateX(18px);
+  opacity: 0;
+  transition: transform 0.16s cubic-bezier(0.4, 0, 1, 1), opacity 0.16s ease-out;
+}
+
+.correction-card.card-entering {
+  animation: cardRestoreIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes cardRestoreIn {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 /* Error type badge */
 .error-badge {
   display: inline-block;
   padding: 2px 10px;
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -1257,13 +1161,13 @@ body::after {
   flex: 0 0 auto;
   align-self: flex-start;
   padding: var(--space-xs) var(--space-md);
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #fff;
   background-color: var(--red-deep);
-  background-image: url('assets/texturedRed.png');
+  background-image: url('assets/texturedRed.webp');
   background-repeat: repeat;
   border-radius: var(--radius-sm);
   transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -1277,7 +1181,7 @@ body::after {
 .btn-dismiss-fix {
   flex: 0 0 auto;
   padding: var(--space-xs) 12px;
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1305,8 +1209,7 @@ body::after {
   position: fixed;
   inset: 0;
   z-index: 49;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(2px);
+  background: rgba(0, 0, 0, 0.65);
   opacity: 0;
   visibility: hidden;
   transition: opacity var(--transition-drawer), visibility var(--transition-drawer);
@@ -1338,9 +1241,8 @@ body::after {
   max-width: 400px;
   padding: var(--space-md) var(--space-lg);
   border-radius: var(--radius-md);
-  background: rgba(var(--bg-deep-rgb), 0.95);
-  backdrop-filter: blur(8px);
-  font-family: 'RedDeadText', 'Lora', serif;
+  background: rgba(var(--bg-deep-rgb), 0.97);
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.85rem;
   color: var(--text-light);
   box-shadow: var(--shadow-lg);
@@ -1364,6 +1266,30 @@ body::after {
 
 .toast-info {
   border-left: 3px solid var(--parchment-dark);
+}
+
+.toast-warning {
+  border-left: 3px solid var(--err-spelling);
+}
+
+.toast-undo-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-family: 'RedDeadText', 'Georgia', serif;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gold-light);
+  background: rgba(199, 164, 74, 0.14);
+  border: 1px solid rgba(199, 164, 74, 0.45);
+  border-radius: var(--radius-sm);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.toast-undo-btn:hover {
+  background: var(--gold);
+  color: var(--ink);
 }
 
 .toast-icon {
@@ -1395,16 +1321,18 @@ body::after {
   background: var(--gold-dim);
 }
 
-/* Journal textarea scrollbar on parchment */
-.editor-textarea::-webkit-scrollbar-track,
-.highlight-layer::-webkit-scrollbar-track {
-  background: rgba(44, 24, 16, 0.06);
+/* Journal scroll viewport scrollbar on dark slate surface */
+.editor-scroll::-webkit-scrollbar-track {
+  background: rgba(var(--bg-deep-rgb), 0.25);
 }
 
-.editor-textarea::-webkit-scrollbar-thumb,
-.highlight-layer::-webkit-scrollbar-thumb {
-  background: var(--ink-light);
+.editor-scroll::-webkit-scrollbar-thumb {
+  background: rgba(184, 166, 126, 0.45);
   border-radius: 99px;
+}
+
+.editor-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-dim);
 }
 
 /* Firefox (avoid overriding ::-webkit-scrollbar in Chromium 121+) */
@@ -1528,8 +1456,7 @@ body::after {
     bottom: 0;
     z-index: 50;
     width: 300px;
-    background: rgba(var(--bg-deep-rgb), 0.96);
-    backdrop-filter: blur(12px);
+    background: rgba(var(--bg-deep-rgb), 0.98);
     transition: transform var(--transition-drawer);
     box-shadow: var(--shadow-lg);
   }
@@ -1564,11 +1491,6 @@ body::after {
 @media (max-width: 768px) {
   :root {
     --header-height: 60px;
-  }
-
-  /* Hide Mary-Beth avatar on mobile */
-  .marybeth-avatar {
-    display: none;
   }
 
   .header-title {
@@ -1650,10 +1572,6 @@ body::after {
     --header-height: 54px;
   }
 
-  .marybeth-avatar {
-    display: none;
-  }
-
   .header-title {
     font-size: 1rem;
   }
@@ -1715,8 +1633,8 @@ body::after {
    20. MOBILE POPOVER — Floating error card above text marks on tap
    -------------------------------------------------------------------------- */
 
-.highlight-layer.has-popover,
-.editor-textarea.has-popover {
+.editor-surface.has-popover .highlight-layer,
+.editor-surface.has-popover .editor-textarea {
   padding-bottom: 260px !important;
 }
 
@@ -1796,20 +1714,18 @@ body::after {
    -------------------------------------------------------------------------- */
 
 .rewrite-banner {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 10;
+  position: relative;
+  flex-shrink: 0;
+  z-index: 6;
   display: flex;
   justify-content: center;
   align-items: center;
   background: rgba(26, 18, 16, 0.96);
   border-bottom: 1px solid var(--gold);
   padding: 8px 16px;
-  font-family: 'RedDeadText', 'Lora', serif;
+  font-family: 'RedDeadText', 'Georgia', serif;
   font-size: 0.85rem;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
@@ -1818,9 +1734,14 @@ body::after {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 600;
+  text-align: center;
 }
 
 /* Container view overrides */
+.journal-container.view-rewrite .editor-surface {
+  background-image: none;
+}
+
 .journal-container.view-rewrite .editor-textarea {
   display: none !important;
 }
@@ -1830,28 +1751,6 @@ body::after {
   pointer-events: auto !important;
   user-select: text !important;
   -webkit-user-select: text !important;
-  padding-top: 28px !important; /* Align to the first ruled line (Ruled Line 1) under the banner on desktop */
-}
-
-.journal-container.view-hone .editor-textarea,
-.journal-container.view-hone .highlight-layer {
-  padding-top: calc(28px + var(--editor-line-height)) !important;
-}
-
-@media (max-width: 1024px) {
-  .journal-container.view-rewrite .highlight-layer,
-  .journal-container.view-hone .editor-textarea,
-  .journal-container.view-hone .highlight-layer {
-    padding-top: calc(22px + var(--editor-line-height)) !important; /* Keep offset on mobile/tablet to avoid overlapping banner */
-  }
-}
-
-@media (max-width: 480px) {
-  .journal-container.view-rewrite .highlight-layer,
-  .journal-container.view-hone .editor-textarea,
-  .journal-container.view-hone .highlight-layer {
-    padding-top: calc(18px + var(--editor-line-height)) !important; /* Keep offset on mobile/tablet to avoid overlapping banner */
-  }
 }
 
 .journal-container.view-rewrite .highlight-layer mark {
@@ -2081,12 +1980,27 @@ body::after {
     border-radius: 0;
     background: #fff;
     position: static;
+    display: block;
     height: auto;
+  }
+
+  .journal-container::before {
+    display: none;
+  }
+
+  .editor-scroll,
+  .editor-surface {
+    display: block;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    background: none;
   }
 
   .editor-textarea {
     position: static;
     height: auto;
+    min-height: 0;
     color: #000;
     font-size: 12pt;
     padding: 0;

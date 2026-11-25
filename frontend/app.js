@@ -37,8 +37,6 @@ const AppState = {
   history:               [],       // Loaded from localStorage
   isLoading:             false,
   activeOperation:       null,     // 'evaluate' | 'rewrite' | 'hone' | null
-  selectedText:          '',
-  selectedRange:         null,     // {start, end}
   historySidebarOpen:    false,
   correctionsSidebarOpen: false,
   currentEntryId:        null,
@@ -71,9 +69,11 @@ const DOM = {};
 
 function initDOMReferences() {
   // Editor
-  DOM.textarea       = document.getElementById('editor-textarea');
-  DOM.highlightLayer = document.getElementById('highlight-layer');
-  DOM.loadingOverlay = document.getElementById('loading-overlay');
+  DOM.editorScroll     = document.getElementById('editor-scroll');
+  DOM.editorSurface    = document.getElementById('editor-surface');
+  DOM.textarea         = document.getElementById('editor-textarea');
+  DOM.highlightLayer   = document.getElementById('highlight-layer');
+  DOM.loadingOverlay   = document.getElementById('loading-overlay');
   DOM.journalContainer = document.querySelector('.journal-container');
   DOM.rewriteBanner    = document.getElementById('rewrite-banner');
   DOM.honeBanner       = document.getElementById('hone-banner');
@@ -119,15 +119,7 @@ function initDOMReferences() {
    Both layers share identical font metrics so marks line up perfectly.
    -------------------------------------------------------------------------- */
 
-/**
- * Copy the textarea's scroll position to the highlight layer
- * so error marks stay aligned as the user scrolls.
- */
-function syncHighlightScroll() {
-  if (!DOM.highlightLayer || !DOM.textarea) return;
-  DOM.highlightLayer.scrollTop  = DOM.textarea.scrollTop;
-  DOM.highlightLayer.scrollLeft = DOM.textarea.scrollLeft;
-}
+
 
 /**
  * Build the highlight layer HTML from the current text and error list.
@@ -170,7 +162,7 @@ function renderHighlights(text, errors, appliedFixes = []) {
   }
 
   if (combined.length === 0) {
-    DOM.highlightLayer.innerHTML = escapeHTML(text) + '\n';
+    DOM.highlightLayer.textContent = text + '\n';
     return;
   }
 
@@ -294,54 +286,88 @@ function renderSubstringWithHighlights(text, startOffset, endOffset, errors, app
 /**
  * Render the full-text interleaved original and rewritten sentences.
  */
+/**
+ * Locate an LLM-returned original sentence span inside displayText starting at cursor.
+ */
+function findSentenceSpan(displayText, originalText, cursor) {
+  if (!originalText) return null;
+
+  let start = displayText.indexOf(originalText, cursor);
+  if (start !== -1) {
+    return { start, end: start + originalText.length };
+  }
+
+  const trimmed = originalText.trim();
+  if (!trimmed) return null;
+
+  start = displayText.indexOf(trimmed, cursor);
+  if (start !== -1) {
+    return { start, end: start + trimmed.length };
+  }
+
+  // Tolerate minor whitespace/newline normalization from the model
+  const tokens = trimmed.split(/\s+/).map((tok) => tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (tokens.length > 0 && tokens.length <= 80) {
+    const wsPattern = new RegExp(tokens.join('\\s+'), 'g');
+    wsPattern.lastIndex = cursor;
+    const match = wsPattern.exec(displayText);
+    if (match) {
+      return { start: match.index, end: match.index + match[0].length };
+    }
+  }
+
+  if (trimmed.length >= 8) {
+    const prefix = trimmed.slice(0, Math.min(24, trimmed.length));
+    const idx = displayText.indexOf(prefix, cursor);
+    if (idx !== -1) {
+      return { start: idx, end: Math.min(displayText.length, idx + trimmed.length) };
+    }
+  }
+
+  return null;
+}
+
 function renderInterleavedRewrite(text, errors, appliedFixes) {
   // Use the original text that rewrite offsets were computed against,
   // falling back to the passed-in text if not available.
   const displayText = AppState.rewriteOriginalText || text;
   let cursor = 0;
   let html = '';
-  
+
   for (let i = 0; i < AppState.rewriteSentences.length; i++) {
     const item = AppState.rewriteSentences[i];
-    
-    let itemStart;
-    let itemEnd;
-    
+
+    let itemStart = null;
+    let itemEnd = null;
+
     if (typeof item.start === 'number' && typeof item.end === 'number') {
       itemStart = item.start;
       itemEnd = item.end;
     } else {
-      let originalText = item.original;
-      itemStart = displayText.indexOf(originalText, cursor);
-      let matchedLength = originalText.length;
-      
-      if (itemStart === -1) {
-        const prefix = originalText.trim().substring(0, 30);
-        const tempIndex = displayText.indexOf(prefix, cursor);
-        if (tempIndex !== -1) {
-          itemStart = tempIndex;
-          matchedLength = Math.min(originalText.length, displayText.length - itemStart);
+      const span = findSentenceSpan(displayText, item.original, cursor);
+      if (span) {
+        itemStart = span.start;
+        itemEnd = span.end;
+        item.start = itemStart;
+        item.end = itemEnd;
+      }
+    }
+
+    let originalHtml;
+    if (itemStart !== null && itemEnd !== null) {
+      if (itemStart > cursor) {
+        const sepText = displayText.substring(cursor, itemStart);
+        // Render separator if not leading blank space
+        if ((cursor > 0 && (sepText.trim() || sepText.includes('\n'))) || (cursor === 0 && sepText.trim())) {
+          html += `<div class="interleaved-separator">${escapeHTML(sepText)}</div>`;
         }
       }
-      
-      if (itemStart === -1) {
-        continue;
-      }
-      
-      itemEnd = itemStart + matchedLength;
-      item.start = itemStart;
-      item.end = itemEnd;
+      originalHtml = renderSubstringWithHighlights(displayText, itemStart, itemEnd, errors, appliedFixes);
+      cursor = itemEnd;
+    } else {
+      // Fallback: never drop a rewritten sentence if exact alignment failed
+      originalHtml = escapeHTML(item.original || '');
     }
-    
-    if (itemStart > cursor) {
-      const sepText = displayText.substring(cursor, itemStart);
-      // Only render separator if it's not at the very beginning of the document, or if it contains non-whitespace content at the beginning
-      if ((cursor > 0 && (sepText.trim() || sepText.includes('\n'))) || (cursor === 0 && sepText.trim())) {
-        html += `<div class="interleaved-separator">${escapeHTML(sepText)}</div>`;
-      }
-    }
-    
-    const originalHtml = renderSubstringWithHighlights(displayText, itemStart, itemEnd, errors, appliedFixes);
     
     const isActive = (i === AppState.activeRewriteIndex);
     html += `
@@ -531,9 +557,11 @@ async function evaluate(force = false) {
     renderCorrections(AppState.errors, AppState.overallScore, AppState.summary, true);
 
     // Toast feedback
-    if (AppState.overallScore !== null) {
-      showToast(`Score: ${AppState.overallScore}/100 — ${AppState.errors.length} issue${AppState.errors.length !== 1 ? 's' : ''} found`, 'success');
-    }
+    const issueCount = AppState.errors.length;
+    showToast(
+      issueCount > 0 ? `Found ${issueCount} issue${issueCount !== 1 ? 's' : ''} to review.` : 'Your text looks great, partner!',
+      'success'
+    );
     saveActiveSession();
   } catch (err) {
     console.error('Evaluate error:', err);
@@ -1140,103 +1168,85 @@ function generateId() {
   return Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
 }
 
-/**
- * Retrieve all saved entries from localStorage.
- * @returns {Array}
- */
-function getEntries() {
-  try {
-    let raw = localStorage.getItem(STORAGE_KEY);
+let _entriesCache = null;
 
-    // If the older seeds exist but not the v5 one, force-update to the new puppy-love text with 6 advanced mistakes and passive sentence
-    if (!localStorage.getItem('rde_seeded_diary_v5')) {
-      localStorage.setItem('rde_seeded_diary_v5', 'true');
-      if (raw) {
-        try {
-          let entries = JSON.parse(raw);
-          entries = entries.map(entry => {
-            if (entry.id === 'seed_crush_diary') {
-              return {
-                id: 'seed_crush_diary',
-                title: 'June 28, Sunday. Weather: Sunny day (晴天)',
-                text: DEFAULT_ENTRY_TEXT,
-                date: new Date().toISOString(),
-                wordCount: 142
-              };
-            }
-            return entry;
-          });
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-          raw = JSON.stringify(entries);
-          localStorage.removeItem('rde_active_session');
-        } catch (e) {
-          localStorage.removeItem(STORAGE_KEY);
-          localStorage.removeItem('rde_active_session');
-          raw = null;
-        }
-      }
-    }
-
-    if (!raw) {
-      const defaultEntry = {
-        id: 'seed_crush_diary',
-        title: 'June 28, Sunday. Weather: Sunny day (晴天)',
-        customTitle: true,
-        text: DEFAULT_ENTRY_TEXT,
-        date: new Date().toISOString(),
-        wordCount: 142
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify([defaultEntry]));
-      localStorage.setItem('rde_seeded_diary_v5', 'true');
-      return [defaultEntry];
-    }
-    return JSON.parse(raw || '[]');
-  } catch {
-    return [];
-  }
+function createSeedEntry() {
+  return {
+    id: 'seed_crush_diary',
+    title: 'June 28, Sunday. Weather: Sunny day (晴天)',
+    customTitle: true,
+    text: DEFAULT_ENTRY_TEXT,
+    date: new Date().toISOString(),
+    wordCount: 142,
+  };
 }
 
 /**
- * Save the current editor content as a journal entry.
+ * Initialize and return the in-memory journal entries cache (single v5 seed/migration).
+ * @returns {Array}
  */
-function saveEntry() {
-  const text = DOM.textarea.value;
-  if (!text.trim()) {
-    showToast('Nothing to save — write something first.', 'error');
-    return;
+function initEntriesCache() {
+  if (_entriesCache !== null) return _entriesCache;
+
+  let entries = null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+
+    if (!localStorage.getItem('rde_seeded_diary_v5')) {
+      localStorage.setItem('rde_seeded_diary_v5', 'true');
+      localStorage.removeItem('rde_active_session');
+      if (raw) {
+        entries = JSON.parse(raw).map((entry) =>
+          entry.id === 'seed_crush_diary' ? createSeedEntry() : entry
+        );
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      }
+    }
+
+    if (!entries) {
+      if (!raw) {
+        entries = [createSeedEntry()];
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+        localStorage.setItem('rde_seeded_diary_v5', 'true');
+      } else {
+        entries = JSON.parse(raw || '[]');
+      }
+    }
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem('rde_active_session');
+    entries = [createSeedEntry()];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    localStorage.setItem('rde_seeded_diary_v5', 'true');
   }
 
-  let entries = getEntries();
-  const entryId = AppState.currentEntryId || generateId();
-  const existingIndex = entries.findIndex((e) => e.id === entryId);
-  const existingEntry = existingIndex >= 0 ? entries[existingIndex] : null;
-  const keepCustomTitle = hasCustomEntryTitle(existingEntry);
+  _entriesCache = Array.isArray(entries) ? entries : [];
+  AppState.history = _entriesCache;
+  return _entriesCache;
+}
 
-  const entry = {
-    id:          entryId,
-    text:        text,
-    title:       keepCustomTitle ? existingEntry.title : deriveEntryTitle(text),
-    customTitle: keepCustomTitle,
-    date:        new Date().toISOString(),
-    wordCount:   text.split(/\s+/).filter(Boolean).length,
-  };
+/**
+ * Retrieve all saved entries from cache / localStorage.
+ * @returns {Array}
+ */
+function getEntries() {
+  return initEntriesCache();
+}
 
-  if (existingIndex >= 0) {
-    entries[existingIndex] = entry;
-  } else {
-    entries.unshift(entry);
-  }
-
+/**
+ * Persist journal entries to localStorage and keep in-memory cache synchronized.
+ */
+function persistEntries(entries) {
+  _entriesCache = entries;
+  AppState.history = _entriesCache;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-  AppState.currentEntryId = entry.id;
-  renderHistory();
-  showToast('Entry saved to journal.', 'success');
 }
 
 /**
  * Load a saved entry into the editor.
  */
 function loadEntry(id) {
+  flushAutoSaveIfPending();
   cancelPendingFixAnimations();
   if (AppState.inRewriteMode) {
     exitRewriteMode();
@@ -1278,17 +1288,36 @@ function loadEntry(id) {
  * Delete a saved entry.
  */
 function deleteEntry(id) {
-  let entries = getEntries();
-  entries = entries.filter((e) => e.id !== id);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  cancelScheduledAutoSave();
+  const entries = getEntries();
+  const deletedIndex = entries.findIndex((e) => e.id === id);
+  if (deletedIndex === -1) return;
 
-  // If we just deleted the active entry, start a new one
-  if (AppState.currentEntryId === id) {
-    newEntry();
+  const deletedEntry = entries[deletedIndex];
+  const wasCurrent = AppState.currentEntryId === id;
+  persistEntries(entries.filter((e) => e.id !== id));
+
+  // If we just deleted the active entry, start a clean one without flushing deleted data
+  if (wasCurrent) {
+    newEntry(false, { skipFlush: true });
   }
 
   renderHistory();
-  showToast('Entry removed.', 'info');
+  showToast('Entry removed.', 'info', {
+    label: 'Undo',
+    onClick: () => {
+      const current = [...getEntries()];
+      if (!current.some((e) => e.id === deletedEntry.id)) {
+        current.splice(Math.min(deletedIndex, current.length), 0, deletedEntry);
+        persistEntries(current);
+        if (wasCurrent) {
+          loadEntry(deletedEntry.id);
+        } else {
+          renderHistory();
+        }
+      }
+    },
+  });
 }
 
 /**
@@ -1296,7 +1325,10 @@ function deleteEntry(id) {
  * @param {boolean} isInit - If true and there are no entries, populates with DEFAULT_ENTRY_TEXT.
  *                           Otherwise, starts with a clean empty editor.
  */
-function newEntry(isInit = false) {
+function newEntry(isInit = false, options = {}) {
+  if (!options.skipFlush) {
+    flushAutoSaveIfPending();
+  }
   cancelPendingFixAnimations();
   if (AppState.inRewriteMode) {
     exitRewriteMode();
@@ -1374,7 +1406,7 @@ function startRenameEntry(id, titleSpan) {
       if (entry) {
         entry.title = newTitle;
         entry.customTitle = true;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+        persistEntries(entries);
       }
       titleSpan.textContent = newTitle;
     } else {
@@ -1505,7 +1537,7 @@ function autoSaveEntry() {
     return;
   }
 
-  let entries = getEntries();
+  const entries = [...getEntries()];
   const entryId = AppState.currentEntryId || generateId();
   const existingIndex = entries.findIndex((e) => e.id === entryId);
   const existingEntry = existingIndex >= 0 ? entries[existingIndex] : null;
@@ -1534,7 +1566,7 @@ function autoSaveEntry() {
     entries.unshift(entry);
   }
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  persistEntries(entries);
   AppState.currentEntryId = entry.id;
   renderHistory();
   saveActiveSession();
@@ -1579,26 +1611,21 @@ function renderCorrections(errors, score, summary, triggerStagger = false) {
     DOM.correctionsList.classList.remove('stagger-in');
   }
 
-  const gap = window.getComputedStyle(DOM.correctionsList).gap || '16px';
-
   DOM.correctionsList.innerHTML = errors
     .map((err, i) => {
       const uid       = ensureErrorUid(err);
       const typeName  = capitalize(err.type || 'grammar');
       const typeClass = `error-${(err.type || 'grammar').toLowerCase()}`;
-      
-      const isRestored = AppState.lastRestoredError && 
-                         AppState.lastRestoredError.start === err.start && 
+
+      const isRestored = AppState.lastRestoredError &&
+                         AppState.lastRestoredError.start === err.start &&
                          AppState.lastRestoredError.original === err.original;
 
       const extraClass = isRestored ? 'card-entering' : '';
-      
-      const inlineStyle = isRestored
-        ? `style="height:0px; margin-top:0px; margin-bottom:-${gap}; padding-top:0px; padding-bottom:0px; border-top-width:0px; border-bottom-width:0px; opacity:0; transform:translateX(120%); overflow:hidden; animation-delay:0s;"`
-        : `style="animation-delay:${i * 0.05}s;"`;
+      const styleAttr = triggerStagger && !isRestored ? `style="animation-delay:${i * 0.04}s;"` : '';
 
       return `
-        <div class="correction-card ${extraClass}" data-error-index="${i}" data-error-uid="${escapeHTML(uid)}" ${inlineStyle}>
+        <div class="correction-card ${extraClass}" data-error-index="${i}" data-error-uid="${escapeHTML(uid)}" ${styleAttr}>
           <span class="error-badge ${typeClass}">${typeName}</span>
           <div class="correction-original"><del>${escapeHTML(err.original || '')}</del></div>
           <div class="correction-suggestion"><ins>${escapeHTML(err.suggestion || '')}</ins></div>
@@ -1614,51 +1641,19 @@ function renderCorrections(errors, score, summary, triggerStagger = false) {
   if (triggerStagger) {
     setTimeout(() => {
       DOM.correctionsList?.classList.remove('stagger-in');
-    }, 1200);
+    }, 1000);
   }
 
-  // Handle entering animation for restored card
   const enteringCard = DOM.correctionsList.querySelector('.card-entering');
   if (enteringCard) {
-    const origStyle = enteringCard.getAttribute('style');
-    
-    enteringCard.style.height = '';
-    enteringCard.style.paddingTop = '';
-    enteringCard.style.paddingBottom = '';
-    enteringCard.style.marginTop = '';
-    enteringCard.style.marginBottom = '';
-    enteringCard.style.borderTopWidth = '';
-    enteringCard.style.borderBottomWidth = '';
-    enteringCard.style.overflow = '';
-    enteringCard.style.opacity = '';
-    enteringCard.style.transform = '';
-    
-    const fullHeight = enteringCard.offsetHeight;
-    
-    enteringCard.setAttribute('style', origStyle);
-    enteringCard.offsetHeight; // force reflow
-
-    enteringCard.style.transition = 'height 300ms cubic-bezier(0.4, 0, 0.2, 1), margin 300ms cubic-bezier(0.4, 0, 0.2, 1), padding 300ms cubic-bezier(0.4, 0, 0.2, 1), border-width 300ms cubic-bezier(0.4, 0, 0.2, 1)';
-    enteringCard.style.height = `${fullHeight}px`;
-    enteringCard.style.paddingTop = ''; 
-    enteringCard.style.paddingBottom = '';
-    enteringCard.style.marginTop = '';
-    enteringCard.style.marginBottom = ''; 
-    enteringCard.style.borderTopWidth = '';
-    enteringCard.style.borderBottomWidth = '';
-    enteringCard.style.overflow = 'hidden';
-
-    setTimeout(() => {
-      enteringCard.style.transition = 'transform 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms cubic-bezier(0.16, 1, 0.3, 1)';
-      enteringCard.style.transform = 'translateX(0)';
-      enteringCard.style.opacity = '1';
-
-      setTimeout(() => {
-        enteringCard.classList.remove('card-entering');
-        enteringCard.setAttribute('style', '');
-        AppState.lastRestoredError = null;
-      }, 300);
-    }, 300);
+    const clearEntering = () => {
+      enteringCard.classList.remove('card-entering');
+      AppState.lastRestoredError = null;
+    };
+    enteringCard.addEventListener('animationend', clearEntering, { once: true });
+    setTimeout(clearEntering, 260);
+  } else {
+    AppState.lastRestoredError = null;
   }
   updateButtonStates();
 }
@@ -1808,17 +1803,21 @@ function cancelPendingFixAnimations() {
  * Identifies the target error by stable object reference / UID so rapid clicks
  * on multiple cards never collide when earlier fixes splice AppState.errors.
  */
-function animateApplyFix(errorRefOrIndex) {
+/**
+ * GPU-composited card removal helper shared by Apply Fix and Dismiss.
+ */
+function animateRemoveCard(errorRefOrIndex, onComplete, validateSpan = false) {
   const err = resolveErrorTarget(errorRefOrIndex);
   if (!err || _pendingFixErrors.has(err)) return;
 
-  // Verify the span still matches before animating the card away
-  const currentSlice = DOM.textarea.value.substring(err.start, err.end);
-  if (currentSlice !== err.original) {
-    showToast('Text changed since evaluation — please re-evaluate.', 'error');
-    renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
-    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
-    return;
+  if (validateSpan) {
+    const currentSlice = DOM.textarea.value.substring(err.start, err.end);
+    if (currentSlice !== err.original) {
+      showToast('Text changed since evaluation — please re-evaluate.', 'error');
+      renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+      renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+      return;
+    }
   }
 
   const uid = ensureErrorUid(err);
@@ -1827,40 +1826,24 @@ function animateApplyFix(errorRefOrIndex) {
     || DOM.correctionsList?.querySelector(`.correction-card[data-error-index="${currentIndex}"]`);
 
   if (!cardEl) {
-    applyFix(err);
+    onComplete(err, null);
     return;
   }
 
   _pendingFixErrors.add(err);
   cardEl.querySelectorAll('button').forEach((btn) => { btn.disabled = true; });
-
-  const rect = cardEl.getBoundingClientRect();
-  const originalHeight = rect.height;
-  const gap = window.getComputedStyle(DOM.correctionsList).gap || '16px';
-
-  cardEl.style.height = `${originalHeight}px`;
-  cardEl.offsetHeight; // force reflow
-
-  cardEl.style.transition = 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 300ms cubic-bezier(0.4, 0, 0.2, 1), height 300ms cubic-bezier(0.4, 0, 0.2, 1), margin 300ms cubic-bezier(0.4, 0, 0.2, 1), padding 300ms cubic-bezier(0.4, 0, 0.2, 1), border-width 300ms cubic-bezier(0.4, 0, 0.2, 1)';
-  
-  cardEl.style.transform = 'translateX(120%)';
-  cardEl.style.opacity = '0';
-  cardEl.style.height = '0px';
-  cardEl.style.marginTop = '0px';
-  cardEl.style.marginBottom = `-${gap}`;
-  cardEl.style.paddingTop = '0px';
-  cardEl.style.paddingBottom = '0px';
-  cardEl.style.borderTopWidth = '0px';
-  cardEl.style.borderBottomWidth = '0px';
-  cardEl.style.overflow = 'hidden';
-  cardEl.style.pointerEvents = 'none';
+  cardEl.classList.add('card-exiting');
 
   const timerId = setTimeout(() => {
     _pendingFixTimers.delete(timerId);
     _pendingFixErrors.delete(err);
-    applyFix(err, cardEl);
-  }, 300);
+    onComplete(err, cardEl);
+  }, 160);
   _pendingFixTimers.add(timerId);
+}
+
+function animateApplyFix(errorRefOrIndex) {
+  animateRemoveCard(errorRefOrIndex, applyFix, true);
 }
 
 /**
@@ -1978,49 +1961,7 @@ function applyFix(errorRefOrIndex, animatedCardEl = null) {
  * Animate a correction card sliding out before dismissing (ignoring) it.
  */
 function animateDismissFix(errorRefOrIndex) {
-  const err = resolveErrorTarget(errorRefOrIndex);
-  if (!err || _pendingFixErrors.has(err)) return;
-
-  const uid = ensureErrorUid(err);
-  const currentIndex = AppState.errors.indexOf(err);
-  const cardEl = DOM.correctionsList?.querySelector(`.correction-card[data-error-uid="${uid}"]`)
-    || DOM.correctionsList?.querySelector(`.correction-card[data-error-index="${currentIndex}"]`);
-
-  if (!cardEl) {
-    dismissFix(err);
-    return;
-  }
-
-  _pendingFixErrors.add(err);
-  cardEl.querySelectorAll('button').forEach((btn) => { btn.disabled = true; });
-
-  const rect = cardEl.getBoundingClientRect();
-  const originalHeight = rect.height;
-  const gap = window.getComputedStyle(DOM.correctionsList).gap || '16px';
-
-  cardEl.style.height = `${originalHeight}px`;
-  cardEl.offsetHeight; // force reflow
-
-  cardEl.style.transition = 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 300ms cubic-bezier(0.4, 0, 0.2, 1), height 300ms cubic-bezier(0.4, 0, 0.2, 1), margin 300ms cubic-bezier(0.4, 0, 0.2, 1), padding 300ms cubic-bezier(0.4, 0, 0.2, 1), border-width 300ms cubic-bezier(0.4, 0, 0.2, 1)';
-
-  cardEl.style.transform = 'translateX(120%)';
-  cardEl.style.opacity = '0';
-  cardEl.style.height = '0px';
-  cardEl.style.marginTop = '0px';
-  cardEl.style.marginBottom = `-${gap}`;
-  cardEl.style.paddingTop = '0px';
-  cardEl.style.paddingBottom = '0px';
-  cardEl.style.borderTopWidth = '0px';
-  cardEl.style.borderBottomWidth = '0px';
-  cardEl.style.overflow = 'hidden';
-  cardEl.style.pointerEvents = 'none';
-
-  const timerId = setTimeout(() => {
-    _pendingFixTimers.delete(timerId);
-    _pendingFixErrors.delete(err);
-    dismissFix(err, cardEl);
-  }, 300);
-  _pendingFixTimers.add(timerId);
+  animateRemoveCard(errorRefOrIndex, dismissFix, false);
 }
 
 /**
@@ -2149,7 +2090,39 @@ async function copyCurrentText() {
   let label = 'Text';
 
   if (AppState.inRewriteMode && AppState.rewriteSentences && AppState.rewriteSentences.length > 0) {
-    textToCopy = AppState.rewriteSentences.map((s) => (s.rewritten || '').trim()).filter(Boolean).join(' ');
+    const origText = AppState.rewriteOriginalText || '';
+    const hasPositioned = origText && AppState.rewriteSentences.some(
+      (s) => typeof s.start === 'number' && typeof s.end === 'number'
+    );
+    if (hasPositioned) {
+      let rebuilt = '';
+      let pos = 0;
+      const unpositioned = [];
+      for (const s of AppState.rewriteSentences) {
+        const rewrittenSentence = (s.rewritten || '').trim();
+        if (typeof s.start === 'number' && typeof s.end === 'number' && s.start >= pos) {
+          if (s.start > pos) {
+            rebuilt += origText.slice(pos, s.start);
+          }
+          rebuilt += rewrittenSentence;
+          pos = Math.max(pos, s.end);
+        } else if (rewrittenSentence) {
+          unpositioned.push(rewrittenSentence);
+        }
+      }
+      if (pos < origText.length) {
+        rebuilt += origText.slice(pos);
+      }
+      if (unpositioned.length > 0) {
+        rebuilt = (rebuilt.trimEnd() ? rebuilt.trimEnd() + '\n\n' : '') + unpositioned.join(' ');
+      }
+      textToCopy = rebuilt;
+    } else {
+      textToCopy = AppState.rewriteSentences
+        .map((s) => (s.rewritten || '').trim())
+        .filter(Boolean)
+        .join(' ');
+    }
     label = 'Rewritten text';
   } else if (AppState.inHoneMode) {
     textToCopy = DOM.textarea ? DOM.textarea.value : (AppState.honedText || '');
@@ -2289,12 +2262,13 @@ function undoFix(fixIndex) {
  * @param {string} message — The message to display
  * @param {'success'|'error'|'info'} type — Toast type for styling
  */
-function showToast(message, type = 'info') {
+function showToast(message, type = 'info', action = null) {
   if (!DOM.toastContainer) return;
 
   const icons = {
     success: '✓',
     error:   '✗',
+    warning: '⚠',
     info:    'ℹ',
   };
 
@@ -2304,13 +2278,30 @@ function showToast(message, type = 'info') {
     <span class="toast-icon">${icons[type] || 'ℹ'}</span>
     <span>${escapeHTML(message)}</span>`;
 
-  DOM.toastContainer.appendChild(toast);
-
-  // Auto-dismiss
-  setTimeout(() => {
+  let dismissTimer = null;
+  const dismissToast = () => {
+    clearTimeout(dismissTimer);
+    if (toast.classList.contains('toast-exit')) return;
     toast.classList.add('toast-exit');
-    toast.addEventListener('animationend', () => toast.remove());
-  }, TOAST_DURATION);
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+    setTimeout(() => toast.remove(), 350);
+  };
+
+  if (action && typeof action.onClick === 'function') {
+    const actionBtn = document.createElement('button');
+    actionBtn.type = 'button';
+    actionBtn.className = 'toast-undo-btn';
+    actionBtn.textContent = action.label || 'Undo';
+    actionBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dismissToast();
+      action.onClick();
+    });
+    toast.appendChild(actionBtn);
+  }
+
+  DOM.toastContainer.appendChild(toast);
+  dismissTimer = setTimeout(dismissToast, action ? Math.max(TOAST_DURATION, 5000) : TOAST_DURATION);
 }
 
 /* --------------------------------------------------------------------------
@@ -2472,7 +2463,55 @@ function formatDate(isoString) {
 /**
  * Save current active editor and evaluation state to localStorage.
  */
+let _sessionSaveTimer = null;
+let _autoSaveTimer = null;
+let _hasPendingAutoSave = false;
+
+function scheduleSaveActiveSession(delayMs = 350) {
+  clearTimeout(_sessionSaveTimer);
+  _sessionSaveTimer = setTimeout(() => {
+    _sessionSaveTimer = null;
+    saveActiveSession();
+  }, delayMs);
+}
+
+function scheduleAutoSaveEntry(delayMs = 1000) {
+  _hasPendingAutoSave = true;
+  clearTimeout(_autoSaveTimer);
+  _autoSaveTimer = setTimeout(() => {
+    _autoSaveTimer = null;
+    _hasPendingAutoSave = false;
+    autoSaveEntry();
+  }, delayMs);
+}
+
+function cancelScheduledAutoSave() {
+  clearTimeout(_autoSaveTimer);
+  _autoSaveTimer = null;
+  _hasPendingAutoSave = false;
+}
+
+function flushAutoSaveIfPending() {
+  if (_hasPendingAutoSave) {
+    cancelScheduledAutoSave();
+    autoSaveEntry();
+  }
+}
+
+function flushAllPendingSaves() {
+  if (_sessionSaveTimer) {
+    clearTimeout(_sessionSaveTimer);
+    _sessionSaveTimer = null;
+    saveActiveSession();
+  }
+  flushAutoSaveIfPending();
+}
+
 function saveActiveSession() {
+  if (_sessionSaveTimer) {
+    clearTimeout(_sessionSaveTimer);
+    _sessionSaveTimer = null;
+  }
   const session = {
     text: DOM.textarea ? DOM.textarea.value : '',
     currentEntryId: AppState.currentEntryId,
@@ -2616,9 +2655,8 @@ function showMobilePopover(markEl) {
   const typeName  = capitalize(err.type || 'grammar');
   const typeClass = `error-${(err.type || 'grammar').toLowerCase()}`;
 
-  // Add has-popover class to allow scrolling past bottom
-  DOM.textarea?.classList.add('has-popover');
-  DOM.highlightLayer?.classList.add('has-popover');
+  // Add has-popover class on shared editor surface so both layers gain bottom scroll clearance
+  DOM.editorSurface?.classList.add('has-popover');
 
   const popover = document.createElement('div');
   popover.className = 'mobile-popover';
@@ -2705,18 +2743,20 @@ function showMobilePopover(markEl) {
 
   const initialPlaceBelow = updatePopoverPosition();
 
-  // Scroll to bring the mark and popover into a clear view with adaptive scroll alignment
-  if (DOM.textarea) {
-    const containerHeight = DOM.textarea.clientHeight;
+  const scrollEl = DOM.editorScroll || DOM.textarea;
+
+  // Scroll to bring the mark and popover into clear view with adaptive scroll alignment
+  if (scrollEl) {
+    const containerHeight = scrollEl.clientHeight;
     let targetScrollTop;
     if (initialPlaceBelow) {
-      // Popover is below. Keep mark near the top (e.g. 15% from top) so there's maximum room below
+      // Popover is below: keep mark near top (~15%) so there is maximum room below
       targetScrollTop = markEl.offsetTop - (containerHeight * 0.15);
     } else {
-      // Popover is above. Keep mark near the bottom (e.g. 70% from top) so there's maximum room above
+      // Popover is above: keep mark near bottom (~70%) so there is maximum room above
       targetScrollTop = markEl.offsetTop - (containerHeight * 0.70);
     }
-    DOM.textarea.scrollTo({
+    scrollEl.scrollTo({
       top: Math.max(0, targetScrollTop),
       behavior: 'smooth'
     });
@@ -2726,8 +2766,9 @@ function showMobilePopover(markEl) {
   const repositionHandler = () => {
     updatePopoverPosition();
   };
-  DOM.textarea?.addEventListener('scroll', repositionHandler);
+  scrollEl?.addEventListener('scroll', repositionHandler, { passive: true });
   popover._repositionHandler = repositionHandler;
+  popover._scrollEl = scrollEl;
 
   // Bind close button click
   popover.querySelector('.popover-close-btn').addEventListener('click', (e) => {
@@ -2758,14 +2799,12 @@ function showMobilePopover(markEl) {
 function removeMobilePopover() {
   const popover = document.body.querySelector('.mobile-popover');
   if (popover) {
-    // Clean up scroll reposition listener
     if (popover._repositionHandler) {
-      DOM.textarea?.removeEventListener('scroll', popover._repositionHandler);
+      (popover._scrollEl || DOM.editorScroll || DOM.textarea)?.removeEventListener('scroll', popover._repositionHandler);
     }
     popover.remove();
   }
-  DOM.textarea?.classList.remove('has-popover');
-  DOM.highlightLayer?.classList.remove('has-popover');
+  DOM.editorSurface?.classList.remove('has-popover');
 }
 
 /* --------------------------------------------------------------------------
@@ -2773,8 +2812,6 @@ function removeMobilePopover() {
    -------------------------------------------------------------------------- */
 
 function setupEventListeners() {
-  let autoSaveTimeout = null;
-
   // Dismiss mobile popover when clicking outside
   document.addEventListener('click', (e) => {
     const popover = document.body.querySelector('.mobile-popover');
@@ -2785,61 +2822,69 @@ function setupEventListeners() {
 
   // --- Textarea events ---
   DOM.textarea?.addEventListener('input', () => {
-    cancelPendingFixAnimations();
-    if (AppState.inRewriteMode) {
-      exitRewriteMode(false);
+    const hadAnalysisState = (
+      AppState.inRewriteMode ||
+      AppState.inHoneMode ||
+      AppState.errors.length > 0 ||
+      AppState.appliedFixes.length > 0 ||
+      AppState.rewriteSentences.length > 0 ||
+      AppState.honedText !== null ||
+      AppState.overallScore !== null ||
+      AppState.evaluatedOnce ||
+      AppState.rewrittenOnce ||
+      AppState.honedOnce
+    );
+
+    if (hadAnalysisState) {
+      cancelPendingFixAnimations();
+      if (AppState.inRewriteMode) {
+        exitRewriteMode(false);
+      }
+      if (AppState.inHoneMode) {
+        exitHoneMode(false);
+      }
+      AppState.rewriteSentences = [];
+      AppState.rewriteOriginalText = null;
+      AppState.honedText = null;
+      AppState.honeImprovements = [];
+      AppState.errors = [];
+      AppState.appliedFixes = [];
+      AppState.overallScore = null;
+      AppState.summary = '';
+      AppState.evaluatedOnce = false;
+      AppState.rewrittenOnce = false;
+      AppState.honedOnce = false;
+      clearCorrections();
     }
-    if (AppState.inHoneMode) {
-      exitHoneMode(false);
-    }
-    AppState.rewriteSentences = [];
-    AppState.rewriteOriginalText = null;
-    AppState.honedText = null;
-    AppState.honeImprovements = [];
-    AppState.errors = [];
-    AppState.appliedFixes = [];
-    AppState.overallScore = null;
-    AppState.summary = '';
-    
-    // Clear generation/evaluation flags since the text changed
-    AppState.evaluatedOnce = false;
-    AppState.rewrittenOnce = false;
-    AppState.honedOnce = false;
-    
+
     updateCounts();
     renderHighlights(DOM.textarea.value, [], []);
-    clearCorrections();
-    
-    syncHighlightScroll();
-    saveActiveSession();
-
-    // Autosave on input (debounced by 1000ms)
-    clearTimeout(autoSaveTimeout);
-    autoSaveTimeout = setTimeout(() => {
-      autoSaveEntry();
-    }, 1000);
+    scheduleSaveActiveSession();
+    scheduleAutoSaveEntry();
   });
 
+  // Safety guard: forward any browser-internal textarea scroll to the shared viewport
   DOM.textarea?.addEventListener('scroll', () => {
-    syncHighlightScroll();
-  });
-
-  DOM.highlightLayer?.addEventListener('scroll', () => {
-    if (DOM.textarea && (DOM.textarea.scrollTop !== DOM.highlightLayer.scrollTop || DOM.textarea.scrollLeft !== DOM.highlightLayer.scrollLeft)) {
-      DOM.textarea.scrollTop = DOM.highlightLayer.scrollTop;
-      DOM.textarea.scrollLeft = DOM.highlightLayer.scrollLeft;
+    if (DOM.textarea.scrollTop && DOM.editorScroll) {
+      DOM.editorScroll.scrollTop += DOM.textarea.scrollTop;
+      DOM.textarea.scrollTop = 0;
+    }
+    if (DOM.textarea.scrollLeft) {
+      DOM.textarea.scrollLeft = 0;
     }
   });
 
-  // Track text selection for the Rewrite feature (not strictly needed for full-rewrite but kept for compatibility)
-  DOM.textarea?.addEventListener('mouseup', () => {
-    trackSelection();
-    syncActiveCorrectionCardFromCaret();
+  DOM.textarea?.addEventListener('mouseup', syncActiveCorrectionCardFromCaret);
+  DOM.textarea?.addEventListener('keyup', syncActiveCorrectionCardFromCaret);
+
+  // Flush debounced session/entry writes when leaving or hiding the page
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      flushAllPendingSaves();
+    }
   });
-  DOM.textarea?.addEventListener('keyup', () => {
-    trackSelection();
-    syncActiveCorrectionCardFromCaret();
-  });
+  window.addEventListener('pagehide', flushAllPendingSaves);
+  window.addEventListener('beforeunload', flushAllPendingSaves);
 
   // Prevent iOS / mobile viewport scroll shifts when focusing/blurring editor
   DOM.textarea?.addEventListener('focus', () => {
@@ -3145,28 +3190,6 @@ function setupEventListeners() {
     }
   });
 
-  // --- Window resize: re-sync highlight layer ---
-  window.addEventListener('resize', () => {
-    syncHighlightScroll();
-  });
-}
-
-/**
- * Track the user's text selection in the textarea for the Rewrite feature.
- */
-function trackSelection() {
-  if (!DOM.textarea) return;
-
-  const start = DOM.textarea.selectionStart;
-  const end   = DOM.textarea.selectionEnd;
-
-  if (start !== end) {
-    AppState.selectedText  = DOM.textarea.value.substring(start, end);
-    AppState.selectedRange = { start, end };
-  } else {
-    AppState.selectedText  = '';
-    AppState.selectedRange = null;
-  }
 }
 
 /**
@@ -3300,19 +3323,20 @@ function setupLongPress(btnEl, clickCallback, longPressCallback) {
    -------------------------------------------------------------------------- */
 
 const MARYBETH_POSES = {
-  'idle-reading': 'assets/marybeth/idle-reading.webp',
-  'evaluate':     'assets/marybeth/evaluate.webp',
-  'rewrite':      'assets/marybeth/rewrite.webp',
-  'hone':         'assets/marybeth/hone.webp',
-  'apply-fix':    'assets/marybeth/apply-fix.webp',
+  'idle-reading': 'assets/marybeth/idle-reading-sm.webp',
+  'evaluate':     'assets/marybeth/evaluate-sm.webp',
+  'rewrite':      'assets/marybeth/rewrite-sm.webp',
+  'hone':         'assets/marybeth/hone-sm.webp',
+  'apply-fix':    'assets/marybeth/apply-fix-sm.webp',
 };
 
 let _maryBethPoseTimer = null;
 let _maryBethSwapTimer = null;
+let _maryBethPreloaded = false;
 
 /**
- * Swap Mary-Beth's pose with a smooth fade transition.
- * Action poses auto-revert to idle-reading after a timeout.
+ * Swap Mary-Beth's pose inside the loading overlay.
+ * Skips hidden apply-fix swaps so fixing errors never triggers pointless image decoding.
  *
  * @param {string} pose — One of: 'idle-reading', 'evaluate', 'rewrite', 'hone', 'apply-fix'
  */
@@ -3321,39 +3345,36 @@ function setMaryBethPose(pose) {
   const avatar = DOM.maryBethAvatar;
   if (!sprite || !avatar) return;
 
+  if (pose === 'apply-fix' && !AppState.isLoading) {
+    return;
+  }
+
   const src = MARYBETH_POSES[pose];
   if (!src) return;
 
-  // Clear any pending revert timer
   if (_maryBethPoseTimer) {
     clearTimeout(_maryBethPoseTimer);
     _maryBethPoseTimer = null;
   }
-
-  // Clear any pending swap timer
   if (_maryBethSwapTimer) {
     clearTimeout(_maryBethSwapTimer);
     _maryBethSwapTimer = null;
   }
 
-  // Fade out
-  sprite.classList.add('pose-swap');
-
-  // After fade-out completes, swap image and fade back in
-  _maryBethSwapTimer = setTimeout(() => {
+  const applyPose = () => {
     sprite.src = src;
     sprite.classList.remove('pose-swap');
-
-    // Toggle active state (pauses breathing, adds glow)
-    if (pose !== 'idle-reading') {
-      avatar.classList.add('pose-active');
-    } else {
-      avatar.classList.remove('pose-active');
-    }
+    avatar.classList.toggle('pose-active', pose !== 'idle-reading');
     _maryBethSwapTimer = null;
-  }, 300);
+  };
 
-  // Auto-revert to idle only for non-loading action poses (like 'apply-fix')
+  if (!sprite.getAttribute('src') || sprite.getAttribute('src').startsWith('data:')) {
+    applyPose();
+  } else {
+    sprite.classList.add('pose-swap');
+    _maryBethSwapTimer = setTimeout(applyPose, 180);
+  }
+
   if (pose === 'apply-fix') {
     _maryBethPoseTimer = setTimeout(() => {
       setMaryBethPose('idle-reading');
@@ -3362,10 +3383,12 @@ function setMaryBethPose(pose) {
 }
 
 /**
- * Preload all Mary-Beth pose images for instant transitions.
+ * Lazily warm the small Mary-Beth sprites after initial page load completes.
  */
 function preloadMaryBethImages() {
-  Object.values(MARYBETH_POSES).forEach(src => {
+  if (_maryBethPreloaded) return;
+  _maryBethPreloaded = true;
+  Object.values(MARYBETH_POSES).forEach((src) => {
     const img = new Image();
     img.src = src;
   });
@@ -3376,44 +3399,11 @@ function preloadMaryBethImages() {
    -------------------------------------------------------------------------- */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Migrate existing localStorage databases and sessions to the 142-word puppy-love seed (v5)
-  if (!localStorage.getItem('rde_seeded_diary_v5')) {
-    localStorage.setItem('rde_seeded_diary_v5', 'true');
-    localStorage.removeItem('rde_active_session');
-    
-    const rawEntries = localStorage.getItem(STORAGE_KEY);
-    if (rawEntries) {
-      try {
-        let entries = JSON.parse(rawEntries);
-        entries = entries.map(entry => {
-          if (entry.id === 'seed_crush_diary') {
-            return {
-              id: 'seed_crush_diary',
-              title: 'June 28, Sunday. Weather: Sunny day (晴天)',
-              customTitle: true,
-              text: DEFAULT_ENTRY_TEXT,
-              date: new Date().toISOString(),
-              wordCount: 142
-            };
-          }
-          return entry;
-        });
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-      } catch (e) {
-        localStorage.removeItem(STORAGE_KEY);
-      }
-    }
-  }
-
-  // Cache all DOM references
   initDOMReferences();
-
-  // Update counts (empty state)
   updateCounts();
 
-  // Load the active session if present, otherwise load the most recent entry
+  const entries = initEntriesCache();
   const restored = restoreActiveSession();
-  const entries = getEntries();
   if (entries.length === 0) {
     newEntry(true);
   } else if (!restored) {
@@ -3422,16 +3412,14 @@ document.addEventListener('DOMContentLoaded', () => {
     renderHistory();
   }
 
-  // Wire up all event listeners
   setupEventListeners();
-
-  // Initial highlight sync
-  syncHighlightScroll();
-
   updateButtonStates();
 
-  // Preload Mary-Beth avatar poses
-  preloadMaryBethImages();
+  // Warm small Mary-Beth sprites only after initial load goes idle
+  window.addEventListener('load', () => {
+    const schedulePreload = window.requestIdleCallback || ((fn) => setTimeout(fn, 1500));
+    schedulePreload(preloadMaryBethImages);
+  }, { once: true });
 
   console.log(
     '%c🤠 Red Dead Editor loaded. Write well, partner.',

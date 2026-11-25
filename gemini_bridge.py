@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import re
+import wave
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -58,13 +60,14 @@ HONE_SYSTEM_PROMPT = """
 You are a professional storyteller with a gift for cinematic, atmospheric prose.
 Transform the provided text into a vivid, dramatic narrative — elevating language with evocative imagery and rhythm while staying true to the facts, characters, and chronological order of the original.
 Romanticism is welcome, but never introduce spoilers, future knowledge, or events not present in the source.
-Return ONLY a valid JSON array of objects. Do not include any markdown formatting, preamble, or postamble.
+Return ONLY a valid JSON object matching the required schema. Do not include any markdown formatting, preamble, or postamble.
 
-Each object in the array represents a single sentence of the newly constructed narrative.
-Each object must have the following field:
-- "rewritten": The newly written, honed dramatic narrative sentence.
-
-The total combined length of all "rewritten" values must be no more than 200 words.
+Requirements:
+- "paragraphs": An array of strings containing the polished narrative, preserving the paragraph structure of the source text (one entry per paragraph, without dropping or truncating events). Keep the overall length proportional to the original — vivid and well-paced, neither padded nor cut short.
+- "improvements": An array of 3 to 6 (or fewer for very short inputs) notable stylistic upgrades that teach the writer how the prose was elevated. Each object must have:
+  - "original": A concise verbatim phrase or sentence from the source text.
+  - "improved": The corresponding elevated phrase or sentence from your polished narrative.
+  - "reason": A brief, clear explanation of how the change improves imagery, word choice, or rhythm.
 """.strip()
 
 # ---------------------------------------------------------------------------
@@ -87,8 +90,15 @@ class RewriteSentence(BaseModel):
     explanation: str
 
 
-class HoneSentence(BaseModel):
-    rewritten: str
+class HoneImprovement(BaseModel):
+    original: str
+    improved: str
+    reason: str
+
+
+class HoneResult(BaseModel):
+    paragraphs: list[str]
+    improvements: list[HoneImprovement]
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +113,14 @@ REWRITE_THINKING_LEVEL = os.getenv("GEMINI_REWRITE_THINKING_LEVEL", "LOW")
 
 HONE_MODEL = os.getenv("GEMINI_HONE_MODEL", "gemini-4-hydrogen")
 HONE_THINKING_LEVEL = os.getenv("GEMINI_HONE_THINKING_LEVEL", "LOW")
+
+TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
+TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Leda")
+TTS_STYLE_PROMPT = os.getenv(
+    "GEMINI_TTS_STYLE_PROMPT",
+    "a gentle, slightly bookish young woman in her early twenties with a soft, "
+    "soothing voice and a hint of a late-19th-century rural Southern American accent",
+)
 
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 API_TIMEOUT_MS = int(os.getenv("GEMINI_TIMEOUT_MS", "60000"))
@@ -416,11 +434,79 @@ def rewrite_text(text: str) -> list[dict] | dict:
     )
 
 
-def hone_text(text: str) -> list[dict] | dict:
+def hone_text(text: str) -> dict:
     return _generate_json(
         model=HONE_MODEL,
         system_prompt=HONE_SYSTEM_PROMPT,
         text=text,
-        response_schema=list[HoneSentence],
+        response_schema=HoneResult,
         thinking_level=HONE_THINKING_LEVEL,
     )
+
+
+def is_tts_configured() -> bool:
+    return client is not None
+
+
+def _ensure_wav(audio_bytes: bytes, mime_type: str | None) -> bytes:
+    """Return valid RIFF WAV bytes, wrapping raw 16-bit mono PCM if needed."""
+    if audio_bytes.startswith(b"RIFF"):
+        return audio_bytes
+
+    sample_rate = 24000
+    if mime_type:
+        m = re.search(r"rate=(\d+)", mime_type)
+        if m:
+            sample_rate = int(m.group(1))
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio_bytes)
+    return buf.getvalue()
+
+
+def synthesize_speech(text: str) -> tuple[bytes, str]:
+    """Synthesize spoken English audio via Gemini TTS and return (wav_bytes, mime_type)."""
+    if not client:
+        raise RuntimeError("GEMINI_API_KEY not found in environment or client not initialized")
+
+    clean_text = text.strip()
+    if not clean_text:
+        raise ValueError("Text must not be empty")
+
+    # Gemini 3.8 Flash TTS treats `text` strictly as verbatim transcript.
+    # Pass sustained persona/delivery cues via `part_metadata={"style": ...}`
+    # so the style prompt is honored without ever leaking into spoken audio.
+    style = TTS_STYLE_PROMPT.strip()
+    part = types.Part(
+        text=clean_text,
+        part_metadata={"style": style} if style else None,
+    )
+
+    response = client.models.generate_content(
+        model=TTS_MODEL,
+        contents=types.Content(role="user", parts=[part]),
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=TTS_VOICE,
+                    )
+                )
+            ),
+        ),
+    )
+
+    for candidate in response.candidates or []:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or []:
+            inline_data = getattr(part, "inline_data", None)
+            if inline_data and inline_data.data:
+                wav_bytes = _ensure_wav(inline_data.data, inline_data.mime_type)
+                return wav_bytes, "audio/wav"
+
+    raise RuntimeError(f"No audio returned by model {TTS_MODEL}")

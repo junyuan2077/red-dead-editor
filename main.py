@@ -6,21 +6,22 @@ Serves:
   • /api/evaluate    – evaluate English writing via Gemini
   • /api/rewrite     – rewrite a sentence via Gemini
   • /api/hone        – polish a text passage via Gemini
-  • /api/tts         – proxy text-to-speech requests to GPT-SoVITS
+  • /api/tts         – synthesize text-to-speech via Gemini TTS
   • /                – static frontend (SPA)
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import logging
 import os
 from pathlib import Path
+import threading
 
-import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -35,7 +36,9 @@ load_dotenv()
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR: str = os.path.join(BASE_DIR, "frontend")
-GPT_SOVITS_URL: str = os.getenv("GPT_SOVITS_URL", "http://127.0.0.1:9880")
+TTS_CACHE_MAX_ITEMS: int = int(os.getenv("TTS_CACHE_MAX_ITEMS", "32"))
+_tts_cache: OrderedDict[str, bytes] = OrderedDict()
+_tts_cache_lock = threading.Lock()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -101,16 +104,8 @@ class TTSRequest(BaseModel):
 
 @app.get("/api/health")
 async def health_check() -> dict:
-    """Liveness probe.  Also reports whether the TTS backend is reachable."""
-    tts_available = False
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(GPT_SOVITS_URL)
-            tts_available = resp.status_code < 500
-    except Exception:
-        pass
-
-    return {"status": "ok", "tts_available": tts_available}
+    """Liveness probe.  Reports whether Gemini TTS is configured."""
+    return {"status": "ok", "tts_available": gemini_bridge.is_tts_configured()}
 
 
 @app.post("/api/evaluate")
@@ -193,81 +188,74 @@ def hone_text(req: HoneRequest) -> dict:
         raise HTTPException(status_code=500, detail=raw_results["error"])
         
     honed = req.text
-    if isinstance(raw_results, list) and len(raw_results) > 0:
-        honed = " ".join([item.get("rewritten", "") for item in raw_results])
-        
+    improvements = []
+    if isinstance(raw_results, dict):
+        paragraphs = raw_results.get("paragraphs")
+        if isinstance(paragraphs, list) and len(paragraphs) > 0:
+            cleaned_paragraphs = [str(p).strip() for p in paragraphs if str(p).strip()]
+            if cleaned_paragraphs:
+                honed = "\n\n".join(cleaned_paragraphs)
+        elif isinstance(raw_results.get("honed"), str) and raw_results["honed"].strip():
+            honed = raw_results["honed"].strip()
+
+        raw_improvements = raw_results.get("improvements")
+        if isinstance(raw_improvements, list):
+            for imp in raw_improvements:
+                if not isinstance(imp, dict):
+                    continue
+                orig = str(imp.get("original") or "").strip()
+                impr = str(imp.get("improved") or "").strip()
+                reason = str(imp.get("reason") or "").strip()
+                if orig or impr or reason:
+                    improvements.append({
+                        "original": orig,
+                        "improved": impr,
+                        "reason": reason,
+                    })
+    elif isinstance(raw_results, list) and len(raw_results) > 0:
+        honed = " ".join([str(item.get("rewritten", "")).strip() for item in raw_results if item.get("rewritten")])
+
     return {
         "honed": honed.strip(),
-        "improvements": []
+        "improvements": improvements
     }
 
 
 @app.post("/api/tts")
-async def text_to_speech(req: TTSRequest) -> StreamingResponse:
-    """Proxy a TTS request to a locally-running GPT-SoVITS server.
-
-    The audio is streamed back to the client as ``audio/wav``.
-    """
-    if not req.text.strip():
+def text_to_speech(req: TTSRequest) -> Response:
+    """Synthesize speech via Gemini TTS and return ``audio/wav`` with bounded caching."""
+    clean_text = req.text.strip()
+    if not clean_text:
         raise HTTPException(status_code=400, detail="Text must not be empty.")
 
-    # Read the reference prompt text from disk.
-    refer_txt_path = os.path.join(BASE_DIR, "refer.txt")
-    try:
-        with open(refer_txt_path, encoding="utf-8") as fh:
-            prompt_text = fh.read().strip()
-    except FileNotFoundError:
-        logger.error("refer.txt not found at %s", refer_txt_path)
-        raise HTTPException(status_code=500, detail="TTS reference text (refer.txt) is missing.")
-
-    payload = {
-        "text": req.text,
-        "text_lang": "en",
-        "ref_audio_path": os.path.join(BASE_DIR, "refer.wav"),
-        "prompt_text": prompt_text,
-        "prompt_lang": "en",
-        "text_split_method": "cut4",
-        "media_type": "wav",
-        "streaming_mode": False,
-    }
+    cache_key = f"{gemini_bridge.TTS_MODEL}:{gemini_bridge.TTS_VOICE}:{clean_text}"
+    with _tts_cache_lock:
+        cached = _tts_cache.get(cache_key)
+        if cached is not None:
+            _tts_cache.move_to_end(cache_key)
+            return Response(
+                content=cached,
+                media_type="audio/wav",
+                headers={"Cache-Control": "private, max-age=86400", "X-TTS-Cache": "HIT"},
+            )
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Dynamically set the GPT and SoVITS models to the requested charlotte voice checkpoints
-            gpt_path = os.path.join(BASE_DIR, "charlotte-e15.ckpt")
-            sovits_path = os.path.join(BASE_DIR, "charlotte_e8_s112.pth")
-            
-            try:
-                logger.info("Setting GPT-SoVITS GPT model weights to %s", gpt_path)
-                await client.get(f"{GPT_SOVITS_URL}/set_gpt_weights", params={"weights_path": gpt_path})
-            except Exception as e:
-                logger.warning("Failed to dynamically set GPT weights: %s", e)
+        wav_bytes, media_type = gemini_bridge.synthesize_speech(clean_text)
+    except Exception as exc:
+        logger.error("Gemini TTS synthesis failed: %s", exc)
+        raise HTTPException(status_code=503, detail="TTS service is temporarily unavailable.")
 
-            try:
-                logger.info("Setting GPT-SoVITS SoVITS model weights to %s", sovits_path)
-                await client.get(f"{GPT_SOVITS_URL}/set_sovits_weights", params={"weights_path": sovits_path})
-            except Exception as e:
-                logger.warning("Failed to dynamically set SoVITS weights: %s", e)
+    with _tts_cache_lock:
+        _tts_cache[cache_key] = wav_bytes
+        _tts_cache.move_to_end(cache_key)
+        while len(_tts_cache) > TTS_CACHE_MAX_ITEMS:
+            _tts_cache.popitem(last=False)
 
-            resp = await client.post(f"{GPT_SOVITS_URL}/tts", json=payload)
-            resp.raise_for_status()
-
-        return StreamingResponse(
-            content=iter([resp.content]),
-            media_type="audio/wav",
-        )
-    except httpx.ConnectError:
-        logger.error("Cannot connect to GPT-SoVITS at %s", GPT_SOVITS_URL)
-        raise HTTPException(
-            status_code=503,
-            detail="TTS service is not available. Is GPT-SoVITS running?",
-        )
-    except httpx.HTTPStatusError as exc:
-        logger.error("GPT-SoVITS returned HTTP %d", exc.response.status_code)
-        raise HTTPException(
-            status_code=exc.response.status_code,
-            detail=f"TTS service error: {exc.response.text[:500]}",
-        )
+    return Response(
+        content=wav_bytes,
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=86400", "X-TTS-Cache": "MISS"},
+    )
 
 # ---------------------------------------------------------------------------
 # Static frontend — MUST be mounted AFTER all /api routes so it doesn't

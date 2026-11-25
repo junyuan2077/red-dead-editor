@@ -72,6 +72,7 @@
 
   /* === Sizing === */
   --header-height: 90px;
+  --footer-height: 28px;
   --sidebar-width-left:  256px;
   --sidebar-width-right: 356px;
   --radius-sm: 4px;
@@ -278,8 +279,8 @@ body::after {
 .app-layout {
   display: grid;
   grid-template-columns: var(--sidebar-width-left) 1fr var(--sidebar-width-right);
-  height: calc(100vh - var(--header-height));
-  height: calc(100dvh - var(--header-height));
+  height: calc(100vh - var(--header-height) - var(--footer-height));
+  height: calc(100dvh - var(--header-height) - var(--footer-height));
   margin-top: var(--header-height);
   overflow: hidden;
 }
@@ -1226,7 +1227,7 @@ body::after {
 
 .toast-container {
   position: fixed;
-  bottom: var(--space-lg);
+  bottom: calc(var(--footer-height) + var(--space-md));
   right: var(--space-lg);
   z-index: 200;
   display: flex;
@@ -1453,7 +1454,7 @@ body::after {
   .sidebar {
     position: fixed;
     top: var(--header-height);
-    bottom: 0;
+    bottom: var(--footer-height);
     z-index: 50;
     width: 300px;
     background: rgba(var(--bg-deep-rgb), 0.98);
@@ -1491,6 +1492,7 @@ body::after {
 @media (max-width: 768px) {
   :root {
     --header-height: 60px;
+    --footer-height: 24px;
   }
 
   .header-title {
@@ -1553,7 +1555,7 @@ body::after {
   .toast-container {
     left: var(--space-md);
     right: var(--space-md);
-    bottom: var(--space-md);
+    bottom: calc(var(--footer-height) + var(--space-sm));
   }
 
   .toast {
@@ -1952,7 +1954,8 @@ body::after {
   .sidebar-toggle,
   .auth-gate,
   .header-user,
-  .sidebar-account-row {
+  .sidebar-account-row,
+  .site-footer {
     display: none !important;
   }
 
@@ -2280,4 +2283,32 @@ body.auth-locked .auth-gate {
   text-align: center;
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+
+
+/* --------------------------------------------------------------------------
+   22. SITE CREDIT FOOTER
+   -------------------------------------------------------------------------- */
+
+.site-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 310;
+  height: var(--footer-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--bg-deep-rgb), 0.94);
+  border-top: 1px solid rgba(199, 164, 74, 0.14);
+  font-family: 'RedDeadText', 'Georgia', serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.footer-credit-handle {
+  color: var(--gold);
+  font-weight: normal;
 }

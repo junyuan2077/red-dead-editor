@@ -105,7 +105,7 @@
 
     <!-- ===== CENTER: Journal Writing Area ===== -->
     <section class="journal-area">
-      <!-- Top bar with counts -->
+      <!-- Top bar with counts & copy button -->
       <div class="journal-header">
         <div class="journal-counts">
           <span class="count-badge" id="word-count" title="Word count">
@@ -117,6 +117,13 @@
             <span class="count-value">0</span> chars
           </span>
         </div>
+        <button class="btn-copy-text" id="btn-copy-text" type="button" title="Copy current text to clipboard" aria-label="Copy text">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+          <span class="copy-label">Copy</span>
+        </button>
       </div>
 
       <!-- The dual-layer editor container -->
@@ -124,6 +131,11 @@
         <!-- Rewrite banner — shown in rewrite mode -->
         <div class="rewrite-banner" id="rewrite-banner" style="display: none;">
           <span class="rewrite-banner-text">Showing full-text rewrite comparison</span>
+        </div>
+
+        <!-- Hone banner — shown in read-only hone preview mode -->
+        <div class="rewrite-banner hone-banner" id="hone-banner" style="display: none;">
+          <span class="rewrite-banner-text">Polished narrative (read-only) · Click Hone to return to your draft</span>
         </div>
 
         <!-- Highlight layer: sits behind the textarea, shows colored marks -->

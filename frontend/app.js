@@ -76,6 +76,7 @@ function initDOMReferences() {
   DOM.loadingOverlay = document.getElementById('loading-overlay');
   DOM.journalContainer = document.querySelector('.journal-container');
   DOM.rewriteBanner    = document.getElementById('rewrite-banner');
+  DOM.honeBanner       = document.getElementById('hone-banner');
 
   // Counts
   DOM.wordCount      = document.getElementById('word-count');
@@ -86,6 +87,7 @@ function initDOMReferences() {
   DOM.btnRewrite     = document.getElementById('btn-rewrite');
   DOM.btnHone        = document.getElementById('btn-hone');
   DOM.btnNewEntry    = document.getElementById('btn-new-entry');
+  DOM.btnCopyText    = document.getElementById('btn-copy-text');
 
   // Sidebars
   DOM.historySidebar     = document.getElementById('history-sidebar');
@@ -345,7 +347,7 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
     html += `
       <div class="interleaved-block${isActive ? ' active-block' : ''}" data-index="${i}">
         <div class="interleaved-original">${originalHtml}</div>
-        <div class="interleaved-rewritten" tabindex="0">${escapeHTML(item.rewritten)}</div>
+        <div class="interleaved-rewritten" tabindex="0"><span class="interleaved-rewritten-text">${escapeHTML(item.rewritten)}</span><button class="btn-tts-play" type="button" aria-label="Listen to rewritten sentence" title="Listen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></button></div>
       </div>`;
       
     cursor = itemEnd;
@@ -504,6 +506,9 @@ async function evaluate(force = false) {
       return;
     }
 
+    // Cancel any in-flight fix animations before replacing errors
+    cancelPendingFixAnimations();
+
     // Store results in state
     AppState.errors       = data.errors || [];
     AppState.appliedFixes = []; // Reset applied fixes on fresh evaluation
@@ -513,6 +518,7 @@ async function evaluate(force = false) {
 
     // Clear rewrite/hone cache since we have a fresh evaluation
     AppState.rewriteSentences = [];
+    AppState.rewriteOriginalText = null;
     AppState.honedText = null;
     AppState.honeImprovements = [];
     AppState.rewrittenOnce = false;
@@ -583,7 +589,7 @@ async function rewrite(force = false) {
       if (AppState.inHoneMode) {
         exitHoneMode(false);
       }
-      enterRewriteMode(data.sentences);
+      enterRewriteMode(data.sentences, true);
       showToast('Article rewritten successfully.', 'success');
     } else {
       showToast('No sentences rewritten.', 'info');
@@ -599,11 +605,11 @@ async function rewrite(force = false) {
 /**
  * Enter the interleaved rewrite comparison view mode.
  */
-function enterRewriteMode(sentences) {
+function enterRewriteMode(sentences, resetOriginal = false) {
   AppState.inRewriteMode = true;
   AppState.rewriteSentences = sentences;
   // Capture the original text that rewrite offsets are computed against
-  if (!AppState.rewriteOriginalText) {
+  if (resetOriginal || AppState.rewriteOriginalText === null || AppState.rewriteOriginalText === undefined) {
     AppState.rewriteOriginalText = DOM.textarea.value;
   }
   if (DOM.highlightLayer) {
@@ -648,14 +654,7 @@ function enterRewriteMode(sentences) {
 function exitRewriteMode(restoreUI = true) {
   AppState.inRewriteMode = false;
   AppState.activeRewriteIndex = null;
-  if (currentAudio) {
-    currentAudio.pause();
-    if (currentAudioElement) {
-      currentAudioElement.classList.remove('audio-playing', 'audio-loading');
-    }
-    currentAudio = null;
-    currentAudioElement = null;
-  }
+  stopCurrentAudio();
   if (DOM.highlightLayer) {
     DOM.highlightLayer.setAttribute('aria-hidden', 'true');
   }
@@ -686,10 +685,10 @@ function exitRewriteMode(restoreUI = true) {
  * HONE — Polish the entire text.
  */
 async function hone(force = false) {
-  // If clicking Hone while in Rewrite view:
+  // If clicking or holding Hone while in Rewrite view:
   if (AppState.inRewriteMode) {
     exitRewriteMode(false);
-    await hone(false);
+    await hone(force);
     return;
   }
 
@@ -704,6 +703,8 @@ async function hone(force = false) {
     AppState.inHoneMode = true;
     AppState.honedOnce = true;
     if (DOM.textarea) DOM.textarea.readOnly = true;
+    if (DOM.honeBanner) DOM.honeBanner.style.display = 'flex';
+    DOM.journalContainer?.classList.add('view-hone');
     if (AppState.inRewriteMode) {
       exitRewriteMode(false);
     }
@@ -728,7 +729,11 @@ async function hone(force = false) {
     return;
   }
 
-  const text = DOM.textarea.value.trim();
+  // When force-regenerating while already in Hone mode, always re-hone the original draft
+  // instead of re-honing the previous honed output and overwriting textBeforeHone.
+  const alreadyInHone = AppState.inHoneMode && AppState.textBeforeHone != null;
+  const sourceText = alreadyInHone ? AppState.textBeforeHone : DOM.textarea.value;
+  const text = sourceText.trim();
   if (!text) {
     showToast('Write something first, partner.', 'error');
     return;
@@ -740,16 +745,20 @@ async function hone(force = false) {
     const data  = await apiHone(text);
     const honed = data.honed || text;
 
-    AppState.textBeforeHone = DOM.textarea.value;
-    AppState.errorsBeforeHone = [...AppState.errors];
-    AppState.appliedFixesBeforeHone = [...AppState.appliedFixes];
-    AppState.overallScoreBeforeHone = AppState.overallScore;
-    AppState.summaryBeforeHone = AppState.summary;
+    if (!alreadyInHone) {
+      AppState.textBeforeHone = DOM.textarea.value;
+      AppState.errorsBeforeHone = [...AppState.errors];
+      AppState.appliedFixesBeforeHone = [...AppState.appliedFixes];
+      AppState.overallScoreBeforeHone = AppState.overallScore;
+      AppState.summaryBeforeHone = AppState.summary;
+    }
 
     AppState.honedText = honed;
     AppState.honeImprovements = data.improvements || [];
     AppState.inHoneMode = true;
     if (DOM.textarea) DOM.textarea.readOnly = true;
+    if (DOM.honeBanner) DOM.honeBanner.style.display = 'flex';
+    DOM.journalContainer?.classList.add('view-hone');
     AppState.honedOnce = true;
 
     if (AppState.inRewriteMode) {
@@ -793,6 +802,8 @@ async function hone(force = false) {
 function exitHoneMode(restoreText = false) {
   AppState.inHoneMode = false;
   if (DOM.textarea) DOM.textarea.readOnly = false;
+  if (DOM.honeBanner) DOM.honeBanner.style.display = 'none';
+  DOM.journalContainer?.classList.remove('view-hone');
 
   if (restoreText && AppState.textBeforeHone !== null && AppState.textBeforeHone !== undefined) {
     DOM.textarea.value = AppState.textBeforeHone;
@@ -898,8 +909,26 @@ class AudioCache {
 }
 
 const audioCache = new AudioCache();
+const TTS_CACHE_PREFIX = 'gemini_tts_v2:';
 let currentAudio = null;
 let currentAudioElement = null;
+
+function stopCurrentAudio() {
+  if (currentAudio) {
+    try {
+      currentAudio.pause();
+    } catch (_) {}
+    if (currentAudio._objectUrl) {
+      URL.revokeObjectURL(currentAudio._objectUrl);
+      currentAudio._objectUrl = null;
+    }
+  }
+  if (currentAudioElement) {
+    currentAudioElement.classList.remove('audio-playing', 'audio-loading');
+  }
+  currentAudio = null;
+  currentAudioElement = null;
+}
 
 // Pre-warm Web Speech API voices to ensure they are loaded when needed
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -943,20 +972,22 @@ async function playTTS(text, element) {
     }
   }
 
-  // Stop any currently playing audio and clean up its styling
-  if (currentAudio) {
-    currentAudio.pause();
-    if (currentAudioElement) {
-      currentAudioElement.classList.remove('audio-playing', 'audio-loading');
-    }
-    currentAudio = null;
-    currentAudioElement = null;
-  }
+  // Stop any currently playing audio and revoke its object URL
+  stopCurrentAudio();
 
   currentAudioElement = element;
   element.classList.add('audio-loading');
 
+  let audioUrl = null;
   const cleanup = () => {
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      audioUrl = null;
+    }
+    if (currentAudio && currentAudio._objectUrl) {
+      URL.revokeObjectURL(currentAudio._objectUrl);
+      currentAudio._objectUrl = null;
+    }
     element.classList.remove('audio-loading', 'audio-playing');
     if (currentAudioElement === element) {
       currentAudio = null;
@@ -965,9 +996,13 @@ async function playTTS(text, element) {
   };
 
   try {
+    await audioCache.waitReady();
+    if (currentAudioElement !== element) return;
+
+    const cacheKey = `${TTS_CACHE_PREFIX}${text}`;
     let blob;
-    if (audioCache.has(text)) {
-      blob = audioCache.get(text);
+    if (audioCache.has(cacheKey)) {
+      blob = audioCache.get(cacheKey);
     } else {
       try {
         const res = await fetch(`${API_BASE}/api/tts`, {
@@ -982,7 +1017,7 @@ async function playTTS(text, element) {
         }
 
         blob = await res.blob();
-        audioCache.set(text, blob);
+        audioCache.set(cacheKey, blob);
       } catch (fetchErr) {
         console.warn('Backend TTS failed, trying browser SpeechSynthesis fallback:', fetchErr);
         // Verify user didn't click away or click another item during fetch
@@ -998,8 +1033,9 @@ async function playTTS(text, element) {
     element.classList.remove('audio-loading');
     element.classList.add('audio-playing');
 
-    const audioUrl = URL.createObjectURL(blob);
+    audioUrl = URL.createObjectURL(blob);
     const audio = new Audio(audioUrl);
+    audio._objectUrl = audioUrl;
     currentAudio = audio;
 
     audio.onended = () => {
@@ -1145,6 +1181,7 @@ function getEntries() {
       const defaultEntry = {
         id: 'seed_crush_diary',
         title: 'June 28, Sunday. Weather: Sunny day (晴天)',
+        customTitle: true,
         text: DEFAULT_ENTRY_TEXT,
         date: new Date().toISOString(),
         wordCount: 142
@@ -1169,16 +1206,20 @@ function saveEntry() {
     return;
   }
 
-  const entry = {
-    id:        AppState.currentEntryId || generateId(),
-    text:      text,
-    title:     text.split('\n')[0].substring(0, 50) || 'Untitled',
-    date:      new Date().toISOString(),
-    wordCount: text.split(/\s+/).filter(Boolean).length,
-  };
-
   let entries = getEntries();
-  const existingIndex = entries.findIndex((e) => e.id === entry.id);
+  const entryId = AppState.currentEntryId || generateId();
+  const existingIndex = entries.findIndex((e) => e.id === entryId);
+  const existingEntry = existingIndex >= 0 ? entries[existingIndex] : null;
+  const keepCustomTitle = hasCustomEntryTitle(existingEntry);
+
+  const entry = {
+    id:          entryId,
+    text:        text,
+    title:       keepCustomTitle ? existingEntry.title : deriveEntryTitle(text),
+    customTitle: keepCustomTitle,
+    date:        new Date().toISOString(),
+    wordCount:   text.split(/\s+/).filter(Boolean).length,
+  };
 
   if (existingIndex >= 0) {
     entries[existingIndex] = entry;
@@ -1196,6 +1237,7 @@ function saveEntry() {
  * Load a saved entry into the editor.
  */
 function loadEntry(id) {
+  cancelPendingFixAnimations();
   if (AppState.inRewriteMode) {
     exitRewriteMode();
   }
@@ -1255,6 +1297,7 @@ function deleteEntry(id) {
  *                           Otherwise, starts with a clean empty editor.
  */
 function newEntry(isInit = false) {
+  cancelPendingFixAnimations();
   if (AppState.inRewriteMode) {
     exitRewriteMode();
   }
@@ -1330,6 +1373,7 @@ function startRenameEntry(id, titleSpan) {
       const entry = entries.find((e) => e.id === id);
       if (entry) {
         entry.title = newTitle;
+        entry.customTitle = true;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
       }
       titleSpan.textContent = newTitle;
@@ -1404,21 +1448,47 @@ function updateButtonStates() {
   const hasRewrite = AppState.rewriteSentences && AppState.rewriteSentences.length > 0;
   const hasHone = !!AppState.honedText;
 
+  const isEvaluateView = !AppState.inRewriteMode && !AppState.inHoneMode && (isEvaluated || hasErrors);
+
   if (DOM.btnEvaluate) {
     DOM.btnEvaluate.disabled = isLoading;
+    DOM.btnEvaluate.classList.toggle('btn--active', isEvaluateView);
+    DOM.btnEvaluate.setAttribute('aria-pressed', String(isEvaluateView));
   }
   if (DOM.btnRewrite) {
     // Enable if currently in rewrite mode, if cached results exist (so user can view them again), or if evaluated and no errors remain
     DOM.btnRewrite.disabled = (AppState.inRewriteMode || hasRewrite) 
       ? false 
       : (isLoading || !isEvaluated || hasErrors);
+    DOM.btnRewrite.classList.toggle('btn--active', AppState.inRewriteMode);
+    DOM.btnRewrite.setAttribute('aria-pressed', String(AppState.inRewriteMode));
   }
   if (DOM.btnHone) {
     // Enable if currently in hone mode, if cached results exist (so user can view them again), or if evaluated and no errors remain
     DOM.btnHone.disabled = (AppState.inHoneMode || hasHone) 
       ? false 
       : (isLoading || !isEvaluated || hasErrors);
+    DOM.btnHone.classList.toggle('btn--active', AppState.inHoneMode);
+    DOM.btnHone.setAttribute('aria-pressed', String(AppState.inHoneMode));
   }
+}
+
+/**
+ * Derive an automatic entry title from the first line of text.
+ */
+function deriveEntryTitle(text) {
+  return (text || '').split('\n')[0].substring(0, 50) || 'Untitled';
+}
+
+/**
+ * Determine whether an existing saved entry has a user-customized title.
+ */
+function hasCustomEntryTitle(existingEntry) {
+  if (!existingEntry || !existingEntry.title) return false;
+  if (existingEntry.customTitle === true) return true;
+  // Backwards compatibility for entries renamed before the customTitle flag existed
+  const prevAuto = deriveEntryTitle(existingEntry.text || '');
+  return existingEntry.title !== prevAuto;
 }
 
 /**
@@ -1435,12 +1505,19 @@ function autoSaveEntry() {
     return;
   }
 
+  let entries = getEntries();
+  const entryId = AppState.currentEntryId || generateId();
+  const existingIndex = entries.findIndex((e) => e.id === entryId);
+  const existingEntry = existingIndex >= 0 ? entries[existingIndex] : null;
+  const keepCustomTitle = hasCustomEntryTitle(existingEntry);
+
   const entry = {
-    id:        AppState.currentEntryId || generateId(),
-    text:      text,
-    title:     text.split('\n')[0].substring(0, 50) || 'Untitled',
-    date:      new Date().toISOString(),
-    wordCount: text.split(/\s+/).filter(Boolean).length,
+    id:          entryId,
+    text:        text,
+    title:       keepCustomTitle ? existingEntry.title : deriveEntryTitle(text),
+    customTitle: keepCustomTitle,
+    date:        new Date().toISOString(),
+    wordCount:   text.split(/\s+/).filter(Boolean).length,
     errors: inHone ? (AppState.errorsBeforeHone || []) : AppState.errors,
     appliedFixes: inHone ? (AppState.appliedFixesBeforeHone || []) : AppState.appliedFixes,
     overallScore: inHone ? AppState.overallScoreBeforeHone : AppState.overallScore,
@@ -1450,9 +1527,6 @@ function autoSaveEntry() {
     honedText: AppState.honedText,
     honeImprovements: AppState.honeImprovements
   };
-
-  let entries = getEntries();
-  const existingIndex = entries.findIndex((e) => e.id === entry.id);
 
   if (existingIndex >= 0) {
     entries[existingIndex] = entry;
@@ -1472,17 +1546,28 @@ function autoSaveEntry() {
 function renderCorrections(errors, score, summary, triggerStagger = false) {
   if (!DOM.correctionsList) return;
 
-  // Summary text
+  // Summary text (+ Apply All button when multiple issues remain)
   if (DOM.summaryText) {
-    DOM.summaryText.innerHTML = summary
+    const summaryParagraph = summary
       ? `<p>${escapeHTML(summary)}</p>`
       : `<p>No assessment available.</p>`;
+    if (errors && errors.length > 1) {
+      DOM.summaryText.innerHTML = `
+        <div class="summary-bar">
+          ${summaryParagraph}
+          <button class="btn-apply-all" type="button" data-action="apply-all" title="Apply all remaining suggestions">
+            Apply All (${errors.length})
+          </button>
+        </div>`;
+    } else {
+      DOM.summaryText.innerHTML = summaryParagraph;
+    }
   }
 
   if (!errors || errors.length === 0) {
     DOM.correctionsList.innerHTML = `
       <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:0.88rem;font-style:italic;">
-        ${score !== null ? 'No issues found — well done, partner!' : 'Evaluate your writing to see corrections here.'}
+        ${score !== null ? 'All clear — ready to Rewrite or Hone, partner!' : 'Evaluate your writing to see corrections here.'}
       </div>`;
     updateButtonStates();
     return;
@@ -1498,6 +1583,7 @@ function renderCorrections(errors, score, summary, triggerStagger = false) {
 
   DOM.correctionsList.innerHTML = errors
     .map((err, i) => {
+      const uid       = ensureErrorUid(err);
       const typeName  = capitalize(err.type || 'grammar');
       const typeClass = `error-${(err.type || 'grammar').toLowerCase()}`;
       
@@ -1512,12 +1598,15 @@ function renderCorrections(errors, score, summary, triggerStagger = false) {
         : `style="animation-delay:${i * 0.05}s;"`;
 
       return `
-        <div class="correction-card ${extraClass}" data-error-index="${i}" ${inlineStyle}>
+        <div class="correction-card ${extraClass}" data-error-index="${i}" data-error-uid="${escapeHTML(uid)}" ${inlineStyle}>
           <span class="error-badge ${typeClass}">${typeName}</span>
           <div class="correction-original"><del>${escapeHTML(err.original || '')}</del></div>
           <div class="correction-suggestion"><ins>${escapeHTML(err.suggestion || '')}</ins></div>
           <p class="correction-explanation">${escapeHTML(err.explanation || '')}</p>
-          <button class="btn btn-apply-fix" data-fix-index="${i}">Apply Fix</button>
+          <div class="correction-card-actions">
+            <button class="btn btn-apply-fix" data-fix-index="${i}" data-fix-uid="${escapeHTML(uid)}">Apply Fix</button>
+            <button class="btn btn-dismiss-fix" data-dismiss-index="${i}" data-dismiss-uid="${escapeHTML(uid)}" title="Ignore this suggestion">Dismiss</button>
+          </div>
         </div>`;
     })
     .join('');
@@ -1602,16 +1691,20 @@ function renderSingleCorrectionCard(err, index) {
     DOM.summaryText.innerHTML = `<p><strong>Reviewing Correction</strong></p>`;
   }
 
+  const uid       = ensureErrorUid(err);
   const typeName  = capitalize(err.type || 'grammar');
   const typeClass = `error-${(err.type || 'grammar').toLowerCase()}`;
 
   DOM.correctionsList.innerHTML = `
-    <div class="correction-card" data-error-index="${index}">
+    <div class="correction-card" data-error-index="${index}" data-error-uid="${escapeHTML(uid)}">
       <span class="error-badge ${typeClass}">${typeName}</span>
       <div class="correction-original"><del>${escapeHTML(err.original || '')}</del></div>
       <div class="correction-suggestion"><ins>${escapeHTML(err.suggestion || '')}</ins></div>
       <p class="correction-explanation">${escapeHTML(err.explanation || '')}</p>
-      <button class="btn btn-apply-fix" data-fix-index="${index}">Apply Fix</button>
+      <div class="correction-card-actions">
+        <button class="btn btn-apply-fix" data-fix-index="${index}" data-fix-uid="${escapeHTML(uid)}">Apply Fix</button>
+        <button class="btn btn-dismiss-fix" data-dismiss-index="${index}" data-dismiss-uid="${escapeHTML(uid)}" title="Ignore this suggestion">Dismiss</button>
+      </div>
     </div>`;
 
   updateButtonStates();
@@ -1623,8 +1716,11 @@ function renderSingleCorrectionCard(err, index) {
 function renderHoneResults(improvements) {
   if (!DOM.correctionsList) return;
 
+  const list = Array.isArray(improvements) ? improvements : [];
   if (DOM.summaryText) {
-    DOM.summaryText.innerHTML = `<p><strong>Text polished</strong> — ${improvements.length} improvement${improvements.length !== 1 ? 's' : ''} made.</p>`;
+    DOM.summaryText.innerHTML = list.length > 0
+      ? `<p><strong>Text polished</strong> — ${list.length} highlight${list.length !== 1 ? 's' : ''} noted.</p>`
+      : `<p><strong>Text polished</strong></p>`;
   }
 
   if (!improvements || improvements.length === 0) {
@@ -1678,12 +1774,43 @@ function updateCounts() {
 }
 
 
+const _pendingFixErrors = new Set();
+const _pendingFixTimers = new Set();
+
+function ensureErrorUid(err) {
+  if (!err._uid) {
+    err._uid = generateId();
+  }
+  return err._uid;
+}
+
+function resolveErrorTarget(errorRefOrIndex) {
+  if (typeof errorRefOrIndex === 'number') {
+    return AppState.errors[errorRefOrIndex] || null;
+  }
+  if (typeof errorRefOrIndex === 'string') {
+    return AppState.errors.find((e) => e._uid === errorRefOrIndex) || null;
+  }
+  if (errorRefOrIndex && typeof errorRefOrIndex === 'object') {
+    return AppState.errors.includes(errorRefOrIndex) ? errorRefOrIndex : null;
+  }
+  return null;
+}
+
+function cancelPendingFixAnimations() {
+  _pendingFixTimers.forEach((id) => clearTimeout(id));
+  _pendingFixTimers.clear();
+  _pendingFixErrors.clear();
+}
+
 /**
  * Animate card applying and slide out before invoking applyFix.
+ * Identifies the target error by stable object reference / UID so rapid clicks
+ * on multiple cards never collide when earlier fixes splice AppState.errors.
  */
-function animateApplyFix(errorIndex) {
-  const err = AppState.errors[errorIndex];
-  if (!err) return;
+function animateApplyFix(errorRefOrIndex) {
+  const err = resolveErrorTarget(errorRefOrIndex);
+  if (!err || _pendingFixErrors.has(err)) return;
 
   // Verify the span still matches before animating the card away
   const currentSlice = DOM.textarea.value.substring(err.start, err.end);
@@ -1694,11 +1821,18 @@ function animateApplyFix(errorIndex) {
     return;
   }
 
-  const cardEl = DOM.correctionsList.querySelector(`.correction-card[data-error-index="${errorIndex}"]`);
+  const uid = ensureErrorUid(err);
+  const currentIndex = AppState.errors.indexOf(err);
+  const cardEl = DOM.correctionsList?.querySelector(`.correction-card[data-error-uid="${uid}"]`)
+    || DOM.correctionsList?.querySelector(`.correction-card[data-error-index="${currentIndex}"]`);
+
   if (!cardEl) {
-    applyFix(errorIndex);
+    applyFix(err);
     return;
   }
+
+  _pendingFixErrors.add(err);
+  cardEl.querySelectorAll('button').forEach((btn) => { btn.disabled = true; });
 
   const rect = cardEl.getBoundingClientRect();
   const originalHeight = rect.height;
@@ -1721,17 +1855,46 @@ function animateApplyFix(errorIndex) {
   cardEl.style.overflow = 'hidden';
   cardEl.style.pointerEvents = 'none';
 
-  setTimeout(() => {
-    applyFix(errorIndex);
+  const timerId = setTimeout(() => {
+    _pendingFixTimers.delete(timerId);
+    _pendingFixErrors.delete(err);
+    applyFix(err, cardEl);
   }, 300);
+  _pendingFixTimers.add(timerId);
+}
+
+/**
+ * Keep cached rewrite sentence offsets, original slices, and rewriteOriginalText
+ * synchronized with the editor text whenever a fix is applied or undone.
+ */
+function syncRewriteStateAfterEdit(spanStart, spanEnd, lengthDiff, newText) {
+  if (!AppState.rewriteSentences || AppState.rewriteSentences.length === 0) return;
+
+  AppState.rewriteSentences.forEach((s) => {
+    if (typeof s.start !== 'number' || typeof s.end !== 'number') return;
+    if (s.start >= spanEnd) {
+      s.start += lengthDiff;
+      s.end   += lengthDiff;
+    } else if (s.end > spanStart) {
+      if (s.start > spanStart) {
+        s.start = spanStart + (spanEnd - spanStart) + lengthDiff;
+      }
+      s.end = Math.max(s.start, s.end + lengthDiff);
+      s.original = newText.substring(s.start, s.end);
+    }
+  });
+
+  AppState.rewriteOriginalText = newText;
 }
 
 /**
  * Apply a correction fix by replacing the error text in the textarea.
  */
-function applyFix(errorIndex) {
-  const err = AppState.errors[errorIndex];
+function applyFix(errorRefOrIndex, animatedCardEl = null) {
+  const err = resolveErrorTarget(errorRefOrIndex);
   if (!err) return;
+  const errorIndex = AppState.errors.indexOf(err);
+  if (errorIndex === -1) return;
 
   const text = DOM.textarea.value;
   if (text.substring(err.start, err.end) !== err.original) {
@@ -1781,17 +1944,8 @@ function applyFix(errorIndex) {
     }
   });
 
-  // Adjust positions of rewrite sentences if in rewrite mode
-  if (AppState.inRewriteMode && AppState.rewriteSentences) {
-    AppState.rewriteSentences.forEach((s) => {
-      if (s.start > err.start) {
-        s.start += lengthDiff;
-        s.end   += lengthDiff;
-      } else if (s.end > err.start) {
-        s.end   += lengthDiff;
-      }
-    });
-  }
+  // Keep cached rewrite spans and rewriteOriginalText synchronized with DOM.textarea.value
+  syncRewriteStateAfterEdit(err.start, err.end, lengthDiff, DOM.textarea.value);
 
   // Re-render
   renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
@@ -1807,14 +1961,251 @@ function applyFix(errorIndex) {
     } else {
       clearCorrections();
     }
-  } else {
+  } else if (_pendingFixErrors.size === 0) {
     renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+  } else {
+    animatedCardEl?.remove();
+    updateButtonStates();
   }
   
   updateCounts();
 
   saveActiveSession();
   autoSaveEntry();
+}
+
+/**
+ * Animate a correction card sliding out before dismissing (ignoring) it.
+ */
+function animateDismissFix(errorRefOrIndex) {
+  const err = resolveErrorTarget(errorRefOrIndex);
+  if (!err || _pendingFixErrors.has(err)) return;
+
+  const uid = ensureErrorUid(err);
+  const currentIndex = AppState.errors.indexOf(err);
+  const cardEl = DOM.correctionsList?.querySelector(`.correction-card[data-error-uid="${uid}"]`)
+    || DOM.correctionsList?.querySelector(`.correction-card[data-error-index="${currentIndex}"]`);
+
+  if (!cardEl) {
+    dismissFix(err);
+    return;
+  }
+
+  _pendingFixErrors.add(err);
+  cardEl.querySelectorAll('button').forEach((btn) => { btn.disabled = true; });
+
+  const rect = cardEl.getBoundingClientRect();
+  const originalHeight = rect.height;
+  const gap = window.getComputedStyle(DOM.correctionsList).gap || '16px';
+
+  cardEl.style.height = `${originalHeight}px`;
+  cardEl.offsetHeight; // force reflow
+
+  cardEl.style.transition = 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 300ms cubic-bezier(0.4, 0, 0.2, 1), height 300ms cubic-bezier(0.4, 0, 0.2, 1), margin 300ms cubic-bezier(0.4, 0, 0.2, 1), padding 300ms cubic-bezier(0.4, 0, 0.2, 1), border-width 300ms cubic-bezier(0.4, 0, 0.2, 1)';
+
+  cardEl.style.transform = 'translateX(120%)';
+  cardEl.style.opacity = '0';
+  cardEl.style.height = '0px';
+  cardEl.style.marginTop = '0px';
+  cardEl.style.marginBottom = `-${gap}`;
+  cardEl.style.paddingTop = '0px';
+  cardEl.style.paddingBottom = '0px';
+  cardEl.style.borderTopWidth = '0px';
+  cardEl.style.borderBottomWidth = '0px';
+  cardEl.style.overflow = 'hidden';
+  cardEl.style.pointerEvents = 'none';
+
+  const timerId = setTimeout(() => {
+    _pendingFixTimers.delete(timerId);
+    _pendingFixErrors.delete(err);
+    dismissFix(err, cardEl);
+  }, 300);
+  _pendingFixTimers.add(timerId);
+}
+
+/**
+ * Dismiss (ignore) a suggestion without modifying the editor text.
+ */
+function dismissFix(errorRefOrIndex, animatedCardEl = null) {
+  const err = resolveErrorTarget(errorRefOrIndex);
+  if (!err) return;
+  const errorIndex = AppState.errors.indexOf(err);
+  if (errorIndex === -1) return;
+
+  AppState.errors.splice(errorIndex, 1);
+
+  renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+
+  if (AppState.inRewriteMode) {
+    if (AppState.activeRewriteIndex !== null && AppState.activeRewriteIndex !== undefined) {
+      const sentence = AppState.rewriteSentences[AppState.activeRewriteIndex];
+      if (sentence) {
+        renderRewriteResult(sentence.original, sentence.rewritten, sentence.explanation);
+      } else {
+        clearCorrections();
+      }
+    } else {
+      clearCorrections();
+    }
+  } else if (_pendingFixErrors.size === 0) {
+    renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+  } else {
+    animatedCardEl?.remove();
+    updateButtonStates();
+  }
+
+  saveActiveSession();
+  autoSaveEntry();
+}
+
+/**
+ * Apply all remaining evaluation fixes in one pass while preserving
+ * individual undo spans in AppState.appliedFixes.
+ */
+function applyAllFixes() {
+  if (!AppState.errors || AppState.errors.length === 0) return;
+
+  cancelPendingFixAnimations();
+
+  let text = DOM.textarea.value;
+  let appliedCount = 0;
+  let skippedCount = 0;
+
+  // Apply in ascending offset order so each shift stays deterministic
+  AppState.errors.sort((a, b) => a.start - b.start);
+  const queue = [...AppState.errors];
+
+  for (const err of queue) {
+    const idx = AppState.errors.indexOf(err);
+    if (idx === -1) continue;
+
+    if (text.substring(err.start, err.end) !== err.original) {
+      skippedCount++;
+      continue;
+    }
+
+    const replacement = err.suggestion || '';
+    text = text.substring(0, err.start) + replacement + text.substring(err.end);
+    const lengthDiff = replacement.length - (err.end - err.start);
+
+    const appliedFix = {
+      start: err.start,
+      end: err.start + replacement.length,
+      original: err.original,
+      suggestion: replacement,
+      originalError: { ...err }
+    };
+    AppState.appliedFixes.push(appliedFix);
+
+    AppState.errors.splice(idx, 1);
+    AppState.errors.forEach((e) => {
+      if (e.start >= err.end) {
+        e.start += lengthDiff;
+        e.end   += lengthDiff;
+      }
+    });
+
+    AppState.appliedFixes.forEach((f, fIdx) => {
+      if (fIdx !== AppState.appliedFixes.length - 1 && f.start >= err.end) {
+        f.start += lengthDiff;
+        f.end   += lengthDiff;
+      }
+    });
+
+    syncRewriteStateAfterEdit(err.start, err.end, lengthDiff, text);
+    appliedCount++;
+  }
+
+  if (appliedCount > 0) {
+    DOM.textarea.value = text;
+    setMaryBethPose('apply-fix');
+  }
+
+  renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
+  renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
+  updateCounts();
+  saveActiveSession();
+  autoSaveEntry();
+
+  if (appliedCount > 0 && skippedCount === 0) {
+    showToast(`Applied all ${appliedCount} fix${appliedCount !== 1 ? 'es' : ''}.`, 'success');
+  } else if (appliedCount > 0 && skippedCount > 0) {
+    showToast(`Applied ${appliedCount} fixes (${skippedCount} skipped — text changed).`, 'info');
+  } else {
+    showToast('Could not apply fixes — text no longer matches. Please re-evaluate.', 'error');
+  }
+}
+
+let _copyFeedbackTimer = null;
+
+/**
+ * Copy the active view's text to the clipboard:
+ * - Rewrite mode: full rewritten passage
+ * - Hone mode: polished passage
+ * - Normal edit mode: current textarea content
+ */
+async function copyCurrentText() {
+  let textToCopy = '';
+  let label = 'Text';
+
+  if (AppState.inRewriteMode && AppState.rewriteSentences && AppState.rewriteSentences.length > 0) {
+    textToCopy = AppState.rewriteSentences.map((s) => (s.rewritten || '').trim()).filter(Boolean).join(' ');
+    label = 'Rewritten text';
+  } else if (AppState.inHoneMode) {
+    textToCopy = DOM.textarea ? DOM.textarea.value : (AppState.honedText || '');
+    label = 'Honed text';
+  } else {
+    textToCopy = DOM.textarea ? DOM.textarea.value : '';
+    label = 'Text';
+  }
+
+  if (!textToCopy.trim()) {
+    showToast('Nothing to copy yet, partner.', 'info');
+    return;
+  }
+
+  let copied = false;
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(textToCopy);
+      copied = true;
+    }
+  } catch (err) {
+    console.warn('Clipboard API failed, trying fallback:', err);
+  }
+
+  if (!copied) {
+    try {
+      const temp = document.createElement('textarea');
+      temp.value = textToCopy;
+      temp.setAttribute('readonly', '');
+      temp.style.position = 'fixed';
+      temp.style.opacity = '0';
+      document.body.appendChild(temp);
+      temp.select();
+      copied = document.execCommand('copy');
+      temp.remove();
+    } catch (err) {
+      console.error('Fallback copy failed:', err);
+    }
+  }
+
+  if (!copied) {
+    showToast('Could not copy to clipboard.', 'error');
+    return;
+  }
+
+  if (DOM.btnCopyText) {
+    const labelEl = DOM.btnCopyText.querySelector('.copy-label');
+    DOM.btnCopyText.classList.add('copied');
+    if (labelEl) labelEl.textContent = 'Copied';
+    clearTimeout(_copyFeedbackTimer);
+    _copyFeedbackTimer = setTimeout(() => {
+      DOM.btnCopyText?.classList.remove('copied');
+      if (labelEl) labelEl.textContent = 'Copy';
+    }, 1500);
+  }
+  showToast(`${label} copied to clipboard.`, 'success');
 }
 
 /**
@@ -1853,17 +2244,8 @@ function undoFix(fixIndex) {
     }
   });
 
-  // Adjust positions of rewrite sentences if in rewrite mode
-  if (AppState.inRewriteMode && AppState.rewriteSentences) {
-    AppState.rewriteSentences.forEach((s) => {
-      if (s.start > fix.start) {
-        s.start += lengthDiff;
-        s.end   += lengthDiff;
-      } else if (s.end > fix.start) {
-        s.end   += lengthDiff;
-      }
-    });
-  }
+  // Keep cached rewrite spans and rewriteOriginalText synchronized with DOM.textarea.value
+  syncRewriteStateAfterEdit(fix.start, fix.end, lengthDiff, DOM.textarea.value);
 
   // Restore the error object
   const restoredError = {
@@ -2147,7 +2529,11 @@ function restoreActiveSession() {
     AppState.appliedFixesBeforeHone = session.appliedFixesBeforeHone || [];
     AppState.overallScoreBeforeHone = session.overallScoreBeforeHone ?? null;
     AppState.summaryBeforeHone = session.summaryBeforeHone || '';
-    AppState.evaluatedOnce = (AppState.overallScore !== null || AppState.errors.length > 0);
+    AppState.evaluatedOnce = (
+      AppState.overallScore !== null ||
+      AppState.errors.length > 0 ||
+      AppState.overallScoreBeforeHone !== null
+    );
     AppState.rewrittenOnce = (AppState.rewriteSentences && AppState.rewriteSentences.length > 0);
     AppState.honedOnce = (AppState.honedText !== null);
 
@@ -2155,7 +2541,11 @@ function restoreActiveSession() {
     updateCounts();
 
     if (AppState.inRewriteMode) {
+      if (DOM.textarea) DOM.textarea.readOnly = false;
+      if (DOM.highlightLayer) DOM.highlightLayer.removeAttribute('aria-hidden');
       if (DOM.rewriteBanner) DOM.rewriteBanner.style.display = 'flex';
+      if (DOM.honeBanner) DOM.honeBanner.style.display = 'none';
+      DOM.journalContainer?.classList.remove('view-hone');
       DOM.journalContainer?.classList.add('view-rewrite');
       renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
       
@@ -2178,18 +2568,27 @@ function restoreActiveSession() {
         }
       }
     } else if (AppState.inHoneMode) {
+      if (DOM.textarea) DOM.textarea.readOnly = true;
+      if (DOM.highlightLayer) DOM.highlightLayer.setAttribute('aria-hidden', 'true');
       if (DOM.rewriteBanner) DOM.rewriteBanner.style.display = 'none';
+      if (DOM.honeBanner) DOM.honeBanner.style.display = 'flex';
       DOM.journalContainer?.classList.remove('view-rewrite');
+      DOM.journalContainer?.classList.add('view-hone');
       renderHighlights(DOM.textarea.value, [], []);
       renderHoneResults(AppState.honeImprovements);
     } else {
+      if (DOM.textarea) DOM.textarea.readOnly = false;
+      if (DOM.highlightLayer) DOM.highlightLayer.setAttribute('aria-hidden', 'true');
       if (DOM.rewriteBanner) DOM.rewriteBanner.style.display = 'none';
+      if (DOM.honeBanner) DOM.honeBanner.style.display = 'none';
       DOM.journalContainer?.classList.remove('view-rewrite');
+      DOM.journalContainer?.classList.remove('view-hone');
       renderHighlights(DOM.textarea.value, AppState.errors, AppState.appliedFixes);
       renderCorrections(AppState.errors, AppState.overallScore, AppState.summary);
     }
 
-    // Sync sidebars
+    // Sync sidebars & active history item highlight
+    renderHistory();
     DOM.historySidebar?.classList.toggle('open', AppState.historySidebarOpen);
     DOM.correctionsSidebar?.classList.toggle('open', AppState.correctionsSidebarOpen);
     updateBackdrop();
@@ -2229,7 +2628,10 @@ function showMobilePopover(markEl) {
     <div class="correction-original"><del>${escapeHTML(err.original || '')}</del></div>
     <div class="correction-suggestion"><ins>${escapeHTML(err.suggestion || '')}</ins></div>
     <p class="correction-explanation">${escapeHTML(err.explanation || '')}</p>
-    <button class="btn btn-apply-fix" data-popover-fix-index="${errorIndex}">Apply Fix</button>
+    <div class="correction-card-actions">
+      <button class="btn btn-apply-fix" data-popover-fix-index="${errorIndex}">Apply Fix</button>
+      <button class="btn btn-dismiss-fix" data-popover-dismiss-index="${errorIndex}">Dismiss</button>
+    </div>
   `;
 
   // Append to document.body so it escapes all overflow:hidden ancestors
@@ -2333,11 +2735,20 @@ function showMobilePopover(markEl) {
     removeMobilePopover();
   });
 
+  const popoverErrUid = ensureErrorUid(err);
+
   // Bind apply fix button click
   popover.querySelector('[data-popover-fix-index]').addEventListener('click', (e) => {
     e.stopPropagation();
     removeMobilePopover();
-    animateApplyFix(errorIndex);
+    animateApplyFix(popoverErrUid);
+  });
+
+  // Bind dismiss button click
+  popover.querySelector('[data-popover-dismiss-index]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeMobilePopover();
+    animateDismissFix(popoverErrUid);
   });
 }
 
@@ -2374,6 +2785,7 @@ function setupEventListeners() {
 
   // --- Textarea events ---
   DOM.textarea?.addEventListener('input', () => {
+    cancelPendingFixAnimations();
     if (AppState.inRewriteMode) {
       exitRewriteMode(false);
     }
@@ -2381,6 +2793,7 @@ function setupEventListeners() {
       exitHoneMode(false);
     }
     AppState.rewriteSentences = [];
+    AppState.rewriteOriginalText = null;
     AppState.honedText = null;
     AppState.honeImprovements = [];
     AppState.errors = [];
@@ -2419,8 +2832,14 @@ function setupEventListeners() {
   });
 
   // Track text selection for the Rewrite feature (not strictly needed for full-rewrite but kept for compatibility)
-  DOM.textarea?.addEventListener('mouseup', trackSelection);
-  DOM.textarea?.addEventListener('keyup', trackSelection);
+  DOM.textarea?.addEventListener('mouseup', () => {
+    trackSelection();
+    syncActiveCorrectionCardFromCaret();
+  });
+  DOM.textarea?.addEventListener('keyup', () => {
+    trackSelection();
+    syncActiveCorrectionCardFromCaret();
+  });
 
   // Prevent iOS / mobile viewport scroll shifts when focusing/blurring editor
   DOM.textarea?.addEventListener('focus', () => {
@@ -2462,6 +2881,7 @@ function setupEventListeners() {
     );
   }
   DOM.btnNewEntry?.addEventListener('click', newEntry);
+  DOM.btnCopyText?.addEventListener('click', copyCurrentText);
 
   // --- Sidebar toggles ---
   DOM.historyToggle?.addEventListener('click', toggleHistorySidebar);
@@ -2508,47 +2928,77 @@ function setupEventListeners() {
     }
   });
 
-  // --- Delegated click: Apply Fix in correction cards ---
-  DOM.correctionsList?.addEventListener('click', (e) => {
-    const fixBtn = e.target.closest('[data-fix-index]');
-    if (fixBtn) {
-      animateApplyFix(parseInt(fixBtn.dataset.fixIndex, 10));
+  // --- Delegated click: Apply All in summary bar ---
+  DOM.summaryText?.addEventListener('click', (e) => {
+    const applyAllBtn = e.target.closest('[data-action="apply-all"]');
+    if (applyAllBtn) {
+      applyAllFixes();
     }
   });
 
-  // --- Delegated hover: highlight corresponding target mark ---
-  DOM.correctionsList?.addEventListener('mouseover', (e) => {
-    const card = e.target.closest('.correction-card');
-    if (card) {
-      const index = card.getAttribute('data-error-index');
-      if (index !== null) {
-        const mark = DOM.highlightLayer?.querySelector(`mark[data-error-index="${index}"]`);
-        if (mark) {
-          mark.classList.add('mark-hover');
-        }
-      }
+  // --- Delegated click: Apply Fix / Dismiss in correction cards ---
+  DOM.correctionsList?.addEventListener('click', (e) => {
+    const fixBtn = e.target.closest('[data-fix-uid], [data-fix-index]');
+    if (fixBtn) {
+      const target = fixBtn.dataset.fixUid || parseInt(fixBtn.dataset.fixIndex, 10);
+      animateApplyFix(target);
+      return;
     }
+    const dismissBtn = e.target.closest('[data-dismiss-uid], [data-dismiss-index]');
+    if (dismissBtn) {
+      const target = dismissBtn.dataset.dismissUid || parseInt(dismissBtn.dataset.dismissIndex, 10);
+      animateDismissFix(target);
+    }
+  });
+
+  // --- Delegated hover: highlight corresponding target mark (deduped across card children) ---
+  let hoveredErrorIndex = null;
+
+  const setHoveredMark = (nextIndex) => {
+    if (hoveredErrorIndex === nextIndex) return;
+    if (hoveredErrorIndex !== null) {
+      DOM.highlightLayer
+        ?.querySelector(`mark[data-error-index="${hoveredErrorIndex}"]`)
+        ?.classList.remove('mark-hover');
+    }
+    hoveredErrorIndex = nextIndex;
+    if (hoveredErrorIndex !== null) {
+      DOM.highlightLayer
+        ?.querySelector(`mark[data-error-index="${hoveredErrorIndex}"]`)
+        ?.classList.add('mark-hover');
+    }
+  };
+
+  DOM.correctionsList?.addEventListener('mouseover', (e) => {
+    const card = e.target.closest('.correction-card[data-error-index]');
+    if (!card) return;
+    if (e.relatedTarget && card.contains(e.relatedTarget)) return;
+    setHoveredMark(card.getAttribute('data-error-index'));
   });
 
   DOM.correctionsList?.addEventListener('mouseout', (e) => {
-    const card = e.target.closest('.correction-card');
-    if (card) {
-      const index = card.getAttribute('data-error-index');
-      if (index !== null) {
-        const mark = DOM.highlightLayer?.querySelector(`mark[data-error-index="${index}"]`);
-        if (mark) {
-          mark.classList.remove('mark-hover');
-        }
-      }
+    const card = e.target.closest('.correction-card[data-error-index]');
+    if (!card) return;
+    if (e.relatedTarget && card.contains(e.relatedTarget)) return;
+    if (hoveredErrorIndex === card.getAttribute('data-error-index')) {
+      setHoveredMark(null);
     }
+  });
+
+  DOM.correctionsList?.addEventListener('mouseleave', () => {
+    setHoveredMark(null);
   });
 
   // --- Prevent focus loss (blur) when clicking non-focusable elements inside interleaved block ---
   DOM.highlightLayer?.addEventListener('mousedown', (e) => {
     if (!AppState.inRewriteMode) return;
     
-    // If they clicked a mark (applied fix or error), let the click handler run (don't prevent default)
-    if (e.target.closest('.mark-applied-fix') || e.target.closest('mark[data-error-index]')) {
+    // If they clicked a mark or the explicit TTS speaker button, let the click handler run naturally
+    if (
+      e.target.closest('.mark-applied-fix') ||
+      e.target.closest('mark[data-error-index]') ||
+      e.target.closest('.btn-tts-play')
+    ) {
       const blockEl = e.target.closest('.interleaved-block');
       if (blockEl) {
         const idx = parseInt(blockEl.getAttribute('data-index'), 10);
@@ -2562,8 +3012,8 @@ function setupEventListeners() {
       const idx = parseInt(blockEl.getAttribute('data-index'), 10);
       const rewrittenEl = blockEl.querySelector('.interleaved-rewritten');
       if (rewrittenEl) {
-        // Prevent default browser behavior of shifting focus away to body/none
-        if (e.target !== rewrittenEl) {
+        // Allow text selection inside .interleaved-rewritten; only prevent blur on non-focusable areas
+        if (!e.target.closest('.interleaved-rewritten')) {
           e.preventDefault();
         }
         activateRewriteBlock(idx, true);
@@ -2614,7 +3064,29 @@ function setupEventListeners() {
       return;
     }
 
-    // Clicked specifically on the rewritten sentence block to play TTS
+    // Clicked the explicit TTS speaker button inside a rewritten sentence
+    const ttsBtn = e.target.closest('.btn-tts-play');
+    if (ttsBtn) {
+      e.stopPropagation();
+      const blockEl = ttsBtn.closest('.interleaved-block');
+      const rewrittenEl = ttsBtn.closest('.interleaved-rewritten');
+      let text = '';
+      if (blockEl) {
+        const idx = parseInt(blockEl.getAttribute('data-index'), 10);
+        activateRewriteBlock(idx, false);
+        text = (AppState.rewriteSentences[idx]?.rewritten || '').trim();
+      }
+      if (!text && rewrittenEl) {
+        const textEl = rewrittenEl.querySelector('.interleaved-rewritten-text') || rewrittenEl;
+        text = textEl.textContent.trim();
+      }
+      if (text && rewrittenEl) {
+        playTTS(text, rewrittenEl);
+      }
+      return;
+    }
+
+    // Clicking a rewritten sentence selects it for sidebar explanation only (no auto-TTS)
     const rewrittenEl = e.target.closest('.interleaved-rewritten');
     if (rewrittenEl) {
       e.stopPropagation();
@@ -2622,10 +3094,6 @@ function setupEventListeners() {
       if (blockEl) {
         const idx = parseInt(blockEl.getAttribute('data-index'), 10);
         activateRewriteBlock(idx, true);
-      }
-      const text = rewrittenEl.textContent.trim();
-      if (text) {
-        playTTS(text, rewrittenEl);
       }
       return;
     }
@@ -2699,6 +3167,37 @@ function trackSelection() {
     AppState.selectedText  = '';
     AppState.selectedRange = null;
   }
+}
+
+/**
+ * On desktop, highlight and scroll to the matching sidebar correction card
+ * when the user clicks or moves the caret into an error span in the textarea.
+ */
+function syncActiveCorrectionCardFromCaret() {
+  if (!DOM.textarea || !DOM.correctionsList) return;
+  if (window.innerWidth <= 1024 || AppState.inRewriteMode || AppState.inHoneMode || !AppState.errors.length) {
+    return;
+  }
+
+  const selStart = DOM.textarea.selectionStart;
+  const selEnd   = DOM.textarea.selectionEnd;
+  const matchedIndex = AppState.errors.findIndex(
+    (err) => selStart <= err.end && selEnd >= err.start
+  );
+
+  let cardToScroll = null;
+  const cards = DOM.correctionsList.querySelectorAll('.correction-card[data-error-index]');
+  cards.forEach((card) => {
+    const idx = parseInt(card.getAttribute('data-error-index'), 10);
+    const shouldBeActive = idx === matchedIndex;
+    const wasActive = card.classList.contains('card-active');
+    card.classList.toggle('card-active', shouldBeActive);
+    if (shouldBeActive && !wasActive) {
+      cardToScroll = card;
+    }
+  });
+
+  cardToScroll?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 /**
@@ -2802,7 +3301,7 @@ function setupLongPress(btnEl, clickCallback, longPressCallback) {
 
 const MARYBETH_POSES = {
   'idle-reading': 'assets/marybeth/idle-reading.webp',
-  'evaluate':     'assets/marybeth/idle-reading.webp',
+  'evaluate':     'assets/marybeth/evaluate.webp',
   'rewrite':      'assets/marybeth/rewrite.webp',
   'hone':         'assets/marybeth/hone.webp',
   'apply-fix':    'assets/marybeth/apply-fix.webp',
@@ -2891,6 +3390,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return {
               id: 'seed_crush_diary',
               title: 'June 28, Sunday. Weather: Sunny day (晴天)',
+              customTitle: true,
               text: DEFAULT_ENTRY_TEXT,
               date: new Date().toISOString(),
               wordCount: 142
@@ -2908,9 +3408,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Cache all DOM references
   initDOMReferences();
 
-  // Render saved history
-  renderHistory();
-
   // Update counts (empty state)
   updateCounts();
 
@@ -2921,6 +3418,8 @@ document.addEventListener('DOMContentLoaded', () => {
     newEntry(true);
   } else if (!restored) {
     loadEntry(entries[0].id);
+  } else {
+    renderHistory();
   }
 
   // Wire up all event listeners

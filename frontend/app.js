@@ -390,10 +390,9 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
     html += `
       <div class="interleaved-block${isActive ? ' active-block' : ''}" data-index="${i}">
         <div class="interleaved-original">${originalHtml}</div>
-        <div class="interleaved-rewritten" tabindex="0"><span class="interleaved-rewritten-text">${escapeHTML(item.rewritten)}</span><button class="btn-tts-play" type="button" aria-label="Listen to rewritten sentence" title="Listen"><svg class="icon-tts-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg><svg class="icon-tts-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button></div>
+        <div class="interleaved-rewritten" tabindex="0"><span class="interleaved-rewritten-main"><span class="interleaved-rewritten-text">${escapeHTML(item.rewritten)}</span><button class="btn-tts-play" type="button" aria-label="Listen to rewritten sentence" title="Listen"><svg class="icon-tts-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg><svg class="icon-tts-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button></span><span class="tts-time-display" hidden>0:00 / 0:00</span></div>
+        <div class="tts-waveform-panel" hidden><div class="tts-waveform-stage"><canvas class="tts-waveform-canvas" aria-label="Audio waveform"></canvas></div><button class="btn-tts-speed" type="button" title="Playback speed" aria-label="Playback speed">1.0x</button></div>
       </div>`;
-      
-    cursor = itemEnd;
   }
   
   if (cursor < displayText.length) {
@@ -415,6 +414,8 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
       }
     }
   }
+
+  rebindWaveformDOMAfterRender();
 }
 
 /**
@@ -976,12 +977,601 @@ class AudioCache {
 
 const audioCache = new AudioCache();
 const TTS_CACHE_PREFIX = 'gemini_tts_v2:';
+const WAVEFORM_BIN_COUNT = 320;
+const TTS_SPEED_PRESETS = [1.0, 1.25, 1.5, 0.5, 0.75];
+const MIN_LOOP_SPAN_S = 0.15;
+
 let currentAudio = null;
 let currentAudioElement = null;
+let _waveformAudioCtx = null;
+
+const waveformState = {
+  sentenceIndex:  null,
+  text:           '',
+  requestId:      0,
+  loading:        false,
+  isReady:        false,
+  rawBins:        null,
+  duration:       0,
+  playbackRate:   1.0,
+  loopA:          null,
+  loopB:          null,
+  isScrubbing:    false,
+  rafId:          null,
+  resizeObserver: null,
+  lastTimeText:   '',
+  blockEl:        null,
+  rewrittenEl:    null,
+  timeEl:         null,
+  panelEl:        null,
+  stageEl:        null,
+  canvasEl:       null,
+  speedBtnEl:     null,
+};
+
+function formatAudioTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const totalSec = Math.floor(seconds + 0.0001);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+function getWaveformDuration() {
+  if (currentAudio instanceof Audio && Number.isFinite(currentAudio.duration) && currentAudio.duration > 0) {
+    return currentAudio.duration;
+  }
+  return waveformState.duration > 0 ? waveformState.duration : 0;
+}
+
+function hasActiveABLoop() {
+  return (
+    waveformState.loopA !== null &&
+    waveformState.loopB !== null &&
+    waveformState.loopB - waveformState.loopA >= MIN_LOOP_SPAN_S
+  );
+}
+
+function updateWaveformTimeDisplay() {
+  if (!waveformState.timeEl) return;
+  const dur = getWaveformDuration();
+  const cur = (currentAudio instanceof Audio && Number.isFinite(currentAudio.currentTime))
+    ? Math.max(0, Math.min(dur || currentAudio.currentTime, currentAudio.currentTime))
+    : 0;
+  const text = `${formatAudioTime(cur)} / ${formatAudioTime(dur)}`;
+  if (text !== waveformState.lastTimeText) {
+    waveformState.timeEl.textContent = text;
+    waveformState.lastTimeText = text;
+  }
+}
+
+function updateWaveformSpeedLabel() {
+  if (!waveformState.speedBtnEl) return;
+  const rate = waveformState.playbackRate;
+  waveformState.speedBtnEl.textContent = Number.isInteger(rate) ? `${rate}.0x` : `${rate}x`;
+}
+
+function stopWaveformRAF() {
+  if (waveformState.rafId !== null) {
+    cancelAnimationFrame(waveformState.rafId);
+    waveformState.rafId = null;
+  }
+}
+
+function disconnectWaveformResizeObserver() {
+  if (waveformState.resizeObserver) {
+    try {
+      waveformState.resizeObserver.disconnect();
+    } catch (_) {}
+    waveformState.resizeObserver = null;
+  }
+}
+
+function attachWaveformResizeObserver(stageEl) {
+  disconnectWaveformResizeObserver();
+  if (typeof ResizeObserver === 'undefined' || !stageEl) return;
+  const ro = new ResizeObserver(() => {
+    drawWaveformCanvas();
+  });
+  ro.observe(stageEl);
+  waveformState.resizeObserver = ro;
+}
+
+function enforceABLoopIfNeeded() {
+  if (!hasActiveABLoop() || !(currentAudio instanceof Audio)) return false;
+  if (waveformState.isScrubbing) return false;
+  if (!currentAudio.paused && currentAudio.currentTime >= waveformState.loopB) {
+    currentAudio.currentTime = waveformState.loopA;
+    updateWaveformTimeDisplay();
+    drawWaveformCanvas();
+    return true;
+  }
+  return false;
+}
+
+function startWaveformRAF() {
+  stopWaveformRAF();
+  const tick = () => {
+    waveformState.rafId = null;
+    if (waveformState.sentenceIndex === null) return;
+    enforceABLoopIfNeeded();
+    updateWaveformTimeDisplay();
+    drawWaveformCanvas();
+    const shouldKeepTicking = waveformState.loading || (currentAudio instanceof Audio && !currentAudio.paused);
+    if (shouldKeepTicking) {
+      waveformState.rafId = requestAnimationFrame(tick);
+    }
+  };
+  waveformState.rafId = requestAnimationFrame(tick);
+}
+
+/**
+ * Parse a RIFF WAVE buffer into normalized mono Float32 samples and sample rate.
+ */
+function parseWavPcm(arrayBuffer) {
+  if (!arrayBuffer || arrayBuffer.byteLength < 44) return null;
+  const view = new DataView(arrayBuffer);
+  const readTag = (offset) => String.fromCharCode(
+    view.getUint8(offset),
+    view.getUint8(offset + 1),
+    view.getUint8(offset + 2),
+    view.getUint8(offset + 3)
+  );
+  if (readTag(0) !== 'RIFF' || readTag(8) !== 'WAVE') return null;
+
+  let audioFormat = 0;
+  let numChannels = 0;
+  let sampleRate = 0;
+  let bitsPerSample = 0;
+  let dataOffset = -1;
+  let dataSize = 0;
+
+  let offset = 12;
+  while (offset + 8 <= view.byteLength) {
+    const chunkId = readTag(offset);
+    const chunkSize = view.getUint32(offset + 4, true);
+    const chunkDataStart = offset + 8;
+
+    if (chunkId === 'fmt ' && chunkSize >= 16 && chunkDataStart + 16 <= view.byteLength) {
+      audioFormat = view.getUint16(chunkDataStart, true);
+      numChannels = view.getUint16(chunkDataStart + 2, true);
+      sampleRate = view.getUint32(chunkDataStart + 4, true);
+      bitsPerSample = view.getUint16(chunkDataStart + 14, true);
+      if (audioFormat === 0xFFFE && chunkSize >= 40 && chunkDataStart + 26 <= view.byteLength) {
+        audioFormat = view.getUint16(chunkDataStart + 24, true);
+      }
+    } else if (chunkId === 'data') {
+      dataOffset = chunkDataStart;
+      dataSize = Math.min(chunkSize, Math.max(0, view.byteLength - chunkDataStart));
+      break;
+    }
+
+    const paddedSize = chunkSize + (chunkSize & 1);
+    const nextOffset = chunkDataStart + paddedSize;
+    if (nextOffset <= offset) break;
+    offset = nextOffset;
+  }
+
+  if (
+    dataOffset < 0 ||
+    dataSize <= 0 ||
+    numChannels <= 0 ||
+    sampleRate <= 0 ||
+    (audioFormat !== 1 && audioFormat !== 3)
+  ) {
+    return null;
+  }
+
+  const bytesPerSample = bitsPerSample >> 3;
+  if (bytesPerSample <= 0) return null;
+  if (audioFormat === 3 && bitsPerSample !== 32) return null;
+  if (audioFormat === 1 && ![8, 16, 24, 32].includes(bitsPerSample)) return null;
+
+  const blockAlign = numChannels * bytesPerSample;
+  const frameCount = Math.floor(dataSize / blockAlign);
+  if (frameCount <= 0) return null;
+
+  const samples = new Float32Array(frameCount);
+  for (let i = 0; i < frameCount; i++) {
+    let sum = 0;
+    const frameBase = dataOffset + i * blockAlign;
+    for (let ch = 0; ch < numChannels; ch++) {
+      const pos = frameBase + ch * bytesPerSample;
+      let val = 0;
+      if (audioFormat === 3) {
+        val = view.getFloat32(pos, true);
+      } else if (bitsPerSample === 16) {
+        val = view.getInt16(pos, true) / 32768;
+      } else if (bitsPerSample === 8) {
+        val = (view.getUint8(pos) - 128) / 128;
+      } else if (bitsPerSample === 24) {
+        let raw = view.getUint8(pos) | (view.getUint8(pos + 1) << 8) | (view.getUint8(pos + 2) << 16);
+        if (raw & 0x800000) raw |= ~0xFFFFFF;
+        val = raw / 8388608;
+      } else if (bitsPerSample === 32) {
+        val = view.getInt32(pos, true) / 2147483648;
+      }
+      sum += val;
+    }
+    samples[i] = sum / numChannels;
+  }
+
+  return {
+    samples,
+    sampleRate,
+    duration: frameCount / sampleRate,
+  };
+}
+
+function computeWaveformBinsFromSamples(samples, binCount = WAVEFORM_BIN_COUNT) {
+  const bins = new Float32Array(binCount);
+  const total = samples ? samples.length : 0;
+  if (!total) return bins;
+
+  const raw = new Float32Array(binCount);
+  for (let i = 0; i < binCount; i++) {
+    const start = Math.floor((i * total) / binCount);
+    const end = Math.max(start + 1, Math.floor(((i + 1) * total) / binCount));
+    let sumSq = 0;
+    let peak = 0;
+    let count = 0;
+    for (let j = start; j < end && j < total; j++) {
+      const a = Math.abs(samples[j]);
+      sumSq += a * a;
+      if (a > peak) peak = a;
+      count++;
+    }
+    const rms = count > 0 ? Math.sqrt(sumSq / count) : 0;
+    raw[i] = 0.65 * rms + 0.35 * peak;
+  }
+
+  const sorted = Array.from(raw).sort((a, b) => a - b);
+  const p97 = Math.max(1e-6, sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.97))] || 0);
+  const gate = 0.035 * p97;
+  const denom = Math.max(1e-6, p97 - gate);
+
+  for (let i = 0; i < binCount; i++) {
+    if (raw[i] <= gate) {
+      bins[i] = 0;
+    } else {
+      const normalized = Math.min(1, Math.max(0, (raw[i] - gate) / denom));
+      bins[i] = Math.pow(normalized, 0.85);
+    }
+  }
+  return bins;
+}
+
+async function decodeAudioWaveform(blob, binCount = WAVEFORM_BIN_COUNT) {
+  const buf = await blob.arrayBuffer();
+  const parsed = parseWavPcm(buf);
+  if (parsed) {
+    return {
+      bins: computeWaveformBinsFromSamples(parsed.samples, binCount),
+      duration: parsed.duration,
+    };
+  }
+
+  const AudioCtx = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+  if (!AudioCtx) {
+    return { bins: new Float32Array(binCount), duration: 0 };
+  }
+  if (!_waveformAudioCtx) {
+    _waveformAudioCtx = new AudioCtx();
+  }
+  const audioBuffer = await _waveformAudioCtx.decodeAudioData(buf.slice(0));
+  const length = audioBuffer.length;
+  const channels = audioBuffer.numberOfChannels || 1;
+  const mono = new Float32Array(length);
+  for (let ch = 0; ch < channels; ch++) {
+    const chData = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      mono[i] += chData[i] / channels;
+    }
+  }
+  return {
+    bins: computeWaveformBinsFromSamples(mono, binCount),
+    duration: audioBuffer.duration || 0,
+  };
+}
+
+function sampleWaveformBarValues(rawBins, barCount) {
+  const out = new Float32Array(barCount);
+  if (!rawBins || !rawBins.length || barCount <= 0) return out;
+
+  for (let i = 0; i < barCount; i++) {
+    const srcStart = Math.floor((i * rawBins.length) / barCount);
+    const srcEnd = Math.max(srcStart + 1, Math.floor(((i + 1) * rawBins.length) / barCount));
+    let sum = 0;
+    let peak = 0;
+    let count = 0;
+    for (let j = srcStart; j < srcEnd && j < rawBins.length; j++) {
+      const v = rawBins[j];
+      sum += v;
+      if (v > peak) peak = v;
+      count++;
+    }
+    out[i] = count > 0 ? (0.45 * (sum / count) + 0.55 * peak) : 0;
+  }
+
+  // Light 3-tap smoothing on voiced segments while keeping silence crisp at 0
+  const smoothed = new Float32Array(barCount);
+  for (let i = 0; i < barCount; i++) {
+    if (out[i] <= 0) {
+      smoothed[i] = 0;
+      continue;
+    }
+    const prev = i > 0 ? out[i - 1] : out[i];
+    const next = i < barCount - 1 ? out[i + 1] : out[i];
+    smoothed[i] = Math.min(1, 0.2 * prev + 0.6 * out[i] + 0.2 * next);
+  }
+  return smoothed;
+}
+
+function drawLoopPinBadge(ctx, x, label, cssW) {
+  const badgeW = 15;
+  const badgeH = 13;
+  const radius = 3;
+  const bx = Math.max(2, Math.min(cssW - badgeW - 2, x - badgeW / 2));
+  const by = 1;
+
+  ctx.save();
+  ctx.fillStyle = '#c7a44a';
+  ctx.beginPath();
+  ctx.moveTo(bx + radius, by);
+  ctx.lineTo(bx + badgeW - radius, by);
+  ctx.quadraticCurveTo(bx + badgeW, by, bx + badgeW, by + radius);
+  ctx.lineTo(bx + badgeW, by + badgeH - radius);
+  ctx.quadraticCurveTo(bx + badgeW, by + badgeH, bx + badgeW - radius, by + badgeH);
+  ctx.lineTo(bx + radius, by + badgeH);
+  ctx.quadraticCurveTo(bx, by + badgeH, bx, by + badgeH - radius);
+  ctx.lineTo(bx, by + radius);
+  ctx.quadraticCurveTo(bx, by, bx + radius, by);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#1a1210';
+  ctx.font = 'bold 9px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, bx + badgeW / 2, by + badgeH / 2 + 0.5);
+  ctx.restore();
+}
+
+function drawWaveformCanvas() {
+  const canvas = waveformState.canvasEl;
+  const stage = waveformState.stageEl;
+  if (!canvas || !stage) return;
+
+  const rect = stage.getBoundingClientRect();
+  const cssW = Math.max(120, Math.round(rect.width || stage.clientWidth || 480));
+  const cssH = Math.max(40, Math.round(rect.height || stage.clientHeight || 64));
+  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+
+  const targetW = Math.round(cssW * dpr);
+  const targetH = Math.round(cssH * dpr);
+  if (canvas.width !== targetW || canvas.height !== targetH) {
+    canvas.width = targetW;
+    canvas.height = targetH;
+  }
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const cy = cssH / 2;
+  const barWidth = 2;
+  const step = 5.5;
+  const padX = 4;
+  const usableW = Math.max(20, cssW - padX * 2);
+  const barCount = Math.max(12, Math.floor(usableW / step) + 1);
+  const actualStep = barCount > 1 ? usableW / (barCount - 1) : 0;
+  const minBarH = 2.2;
+  const maxBarH = cssH * 0.68;
+
+  const dur = getWaveformDuration();
+  const cur = (currentAudio instanceof Audio && Number.isFinite(currentAudio.currentTime))
+    ? currentAudio.currentTime
+    : 0;
+  const progress = dur > 0 ? Math.min(1, Math.max(0, cur / dur)) : 0;
+  const playheadX = padX + progress * usableW;
+
+  const hasLoopA = waveformState.loopA !== null && dur > 0;
+  const hasLoopB = waveformState.loopB !== null && dur > 0;
+  const abActive = hasActiveABLoop() && dur > 0;
+  const xA = hasLoopA ? (padX + Math.min(1, Math.max(0, waveformState.loopA / dur)) * usableW) : null;
+  const xB = hasLoopB ? (padX + Math.min(1, Math.max(0, waveformState.loopB / dur)) * usableW) : null;
+
+  // Translucent A-B loop range band
+  if (abActive && xA !== null && xB !== null) {
+    ctx.fillStyle = 'rgba(199, 164, 74, 0.11)';
+    ctx.fillRect(xA, 15, Math.max(2, xB - xA), Math.max(8, cssH - 19));
+  }
+
+  if (waveformState.loading || !waveformState.rawBins) {
+    // Subtle pulsing loading dots along the midline
+    const pulsePhase = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.005;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = barWidth;
+    for (let i = 0; i < barCount; i++) {
+      const x = padX + i * actualStep;
+      const wave = 0.5 + 0.5 * Math.sin(pulsePhase - i * 0.25);
+      ctx.strokeStyle = `rgba(199, 164, 74, ${0.22 + 0.25 * wave})`;
+      ctx.beginPath();
+      ctx.moveTo(x, cy - 0.05);
+      ctx.lineTo(x, cy + 0.05);
+      ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+
+  const bars = sampleWaveformBarValues(waveformState.rawBins, barCount);
+  ctx.lineCap = 'round';
+  ctx.lineWidth = barWidth;
+
+  for (let i = 0; i < barCount; i++) {
+    const x = padX + i * actualStep;
+    const val = bars[i];
+    const barH = val > 0 ? Math.max(minBarH, val * maxBarH) : minBarH;
+    const half = Math.max(0.05, (barH - barWidth) / 2);
+
+    const inLoop = !abActive || (x >= xA - 0.5 && x <= xB + 0.5);
+    if (!inLoop) {
+      ctx.strokeStyle = 'rgba(184, 154, 90, 0.2)';
+    } else if (x <= playheadX) {
+      ctx.strokeStyle = val > 0 ? 'rgba(218, 186, 102, 0.92)' : 'rgba(218, 186, 102, 0.58)';
+    } else {
+      ctx.strokeStyle = val > 0 ? 'rgba(184, 154, 90, 0.45)' : 'rgba(184, 154, 90, 0.32)';
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(x, cy - half);
+    ctx.lineTo(x, cy + half);
+    ctx.stroke();
+  }
+
+  // A / B loop vertical marker lines & pill badges
+  if (xA !== null) {
+    ctx.strokeStyle = 'rgba(232, 212, 139, 0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(xA, 14);
+    ctx.lineTo(xA, cssH - 4);
+    ctx.stroke();
+    drawLoopPinBadge(ctx, xA, 'A', cssW);
+  }
+  if (xB !== null) {
+    ctx.strokeStyle = 'rgba(232, 212, 139, 0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(xB, 14);
+    ctx.lineTo(xB, cssH - 4);
+    ctx.stroke();
+    drawLoopPinBadge(ctx, xB, 'B', cssW);
+  }
+
+  // Soft radial golden aura behind playhead
+  const clampedPlayX = Math.max(2, Math.min(cssW - 2, playheadX));
+  const glowRadius = 26;
+  const glow = ctx.createRadialGradient(clampedPlayX, cy, 1, clampedPlayX, cy, glowRadius);
+  glow.addColorStop(0, 'rgba(248, 224, 146, 0.36)');
+  glow.addColorStop(0.45, 'rgba(199, 164, 74, 0.14)');
+  glow.addColorStop(1, 'rgba(199, 164, 74, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(clampedPlayX - glowRadius, 0, glowRadius * 2, cssH);
+
+  // Glowing vertical playhead bar
+  const playheadHalf = Math.max(10, (cssH * 0.86) / 2);
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2.6;
+  ctx.shadowColor = 'rgba(245, 216, 128, 0.85)';
+  ctx.shadowBlur = 12;
+  ctx.strokeStyle = '#faebb4';
+  ctx.beginPath();
+  ctx.moveTo(clampedPlayX, cy - playheadHalf);
+  ctx.lineTo(clampedPlayX, cy + playheadHalf);
+  ctx.stroke();
+  ctx.restore();
+
+  // Sharp luminous core pass
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2.0;
+  ctx.strokeStyle = '#fff3ca';
+  ctx.beginPath();
+  ctx.moveTo(clampedPlayX, cy - playheadHalf);
+  ctx.lineTo(clampedPlayX, cy + playheadHalf);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function mountWaveformOnBlock(sentenceIdx, text) {
+  if (!DOM.highlightLayer || sentenceIdx === null || sentenceIdx === undefined) return false;
+  const blockEl = DOM.highlightLayer.querySelector(`.interleaved-block[data-index="${sentenceIdx}"]`);
+  if (!blockEl) return false;
+
+  const rewrittenEl = blockEl.querySelector('.interleaved-rewritten');
+  const timeEl = blockEl.querySelector('.tts-time-display');
+  const panelEl = blockEl.querySelector('.tts-waveform-panel');
+  const stageEl = panelEl?.querySelector('.tts-waveform-stage') || null;
+  const canvasEl = panelEl?.querySelector('.tts-waveform-canvas') || null;
+  const speedBtnEl = panelEl?.querySelector('.btn-tts-speed') || null;
+
+  waveformState.sentenceIndex = sentenceIdx;
+  waveformState.text = text;
+  waveformState.blockEl = blockEl;
+  waveformState.rewrittenEl = rewrittenEl;
+  waveformState.timeEl = timeEl;
+  waveformState.panelEl = panelEl;
+  waveformState.stageEl = stageEl;
+  waveformState.canvasEl = canvasEl;
+  waveformState.speedBtnEl = speedBtnEl;
+  waveformState.lastTimeText = '';
+
+  blockEl.classList.add('waveform-open');
+  if (timeEl) timeEl.hidden = false;
+  if (panelEl) panelEl.hidden = false;
+  updateWaveformSpeedLabel();
+  updateWaveformTimeDisplay();
+  attachWaveformResizeObserver(stageEl);
+  drawWaveformCanvas();
+  return true;
+}
+
+function rebindWaveformDOMAfterRender() {
+  if (waveformState.sentenceIndex === null || !DOM.highlightLayer) return;
+  const blockEl = DOM.highlightLayer.querySelector(`.interleaved-block[data-index="${waveformState.sentenceIndex}"]`);
+  if (!blockEl) {
+    stopCurrentAudio();
+    return;
+  }
+
+  const rewrittenEl = blockEl.querySelector('.interleaved-rewritten');
+  const timeEl = blockEl.querySelector('.tts-time-display');
+  const panelEl = blockEl.querySelector('.tts-waveform-panel');
+  const stageEl = panelEl?.querySelector('.tts-waveform-stage') || null;
+  const canvasEl = panelEl?.querySelector('.tts-waveform-canvas') || null;
+  const speedBtnEl = panelEl?.querySelector('.btn-tts-speed') || null;
+
+  waveformState.blockEl = blockEl;
+  waveformState.rewrittenEl = rewrittenEl;
+  waveformState.timeEl = timeEl;
+  waveformState.panelEl = panelEl;
+  waveformState.stageEl = stageEl;
+  waveformState.canvasEl = canvasEl;
+  waveformState.speedBtnEl = speedBtnEl;
+  waveformState.lastTimeText = '';
+  currentAudioElement = rewrittenEl;
+
+  blockEl.classList.add('waveform-open');
+  if (rewrittenEl) {
+    rewrittenEl.classList.toggle('audio-loading', waveformState.loading);
+    const isPlaying = !!(currentAudio instanceof Audio && !currentAudio.paused && !waveformState.loading);
+    rewrittenEl.classList.toggle('audio-playing', isPlaying);
+  }
+  if (timeEl) timeEl.hidden = false;
+  if (panelEl) panelEl.hidden = false;
+  updateWaveformSpeedLabel();
+  updateWaveformTimeDisplay();
+  attachWaveformResizeObserver(stageEl);
+  drawWaveformCanvas();
+}
 
 function stopCurrentAudio() {
+  waveformState.requestId++;
+  stopWaveformRAF();
+  disconnectWaveformResizeObserver();
+
   if (currentAudio) {
     try {
+      currentAudio.onended = null;
+      currentAudio.onerror = null;
+      currentAudio.ontimeupdate = null;
+      currentAudio.onloadedmetadata = null;
       currentAudio.pause();
     } catch (_) {}
     if (currentAudio._objectUrl) {
@@ -992,8 +1582,180 @@ function stopCurrentAudio() {
   if (currentAudioElement) {
     currentAudioElement.classList.remove('audio-playing', 'audio-loading');
   }
+
+  if (waveformState.blockEl) {
+    waveformState.blockEl.classList.remove('waveform-open');
+  }
+  if (waveformState.rewrittenEl) {
+    waveformState.rewrittenEl.classList.remove('audio-playing', 'audio-loading');
+  }
+  if (waveformState.timeEl) {
+    waveformState.timeEl.hidden = true;
+    waveformState.timeEl.textContent = '0:00 / 0:00';
+  }
+  if (waveformState.panelEl) {
+    waveformState.panelEl.hidden = true;
+  }
+
   currentAudio = null;
   currentAudioElement = null;
+
+  waveformState.sentenceIndex = null;
+  waveformState.text = '';
+  waveformState.loading = false;
+  waveformState.isReady = false;
+  waveformState.rawBins = null;
+  waveformState.duration = 0;
+  waveformState.loopA = null;
+  waveformState.loopB = null;
+  waveformState.isScrubbing = false;
+  waveformState.lastTimeText = '';
+  waveformState.blockEl = null;
+  waveformState.rewrittenEl = null;
+  waveformState.timeEl = null;
+  waveformState.panelEl = null;
+  waveformState.stageEl = null;
+  waveformState.canvasEl = null;
+  waveformState.speedBtnEl = null;
+}
+
+function startActiveAudioPlayback() {
+  if (!(currentAudio instanceof Audio)) return;
+  waveformState.rewrittenEl?.classList.add('audio-playing');
+  startWaveformRAF();
+  const playPromise = currentAudio.play();
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch((err) => {
+      console.error('Audio play failed:', err);
+      waveformState.rewrittenEl?.classList.remove('audio-playing');
+      stopWaveformRAF();
+      drawWaveformCanvas();
+    });
+  }
+}
+
+function toggleWaveformPlayPause() {
+  if (!waveformState.isReady || !(currentAudio instanceof Audio)) return;
+  if (!currentAudio.paused) {
+    currentAudio.pause();
+    waveformState.rewrittenEl?.classList.remove('audio-playing');
+    stopWaveformRAF();
+    updateWaveformTimeDisplay();
+    drawWaveformCanvas();
+    return;
+  }
+
+  const dur = getWaveformDuration();
+  if (hasActiveABLoop()) {
+    if (currentAudio.currentTime < waveformState.loopA || currentAudio.currentTime >= waveformState.loopB - 0.02) {
+      currentAudio.currentTime = waveformState.loopA;
+    }
+  } else if (dur > 0 && currentAudio.currentTime >= dur - 0.03) {
+    currentAudio.currentTime = 0;
+  }
+  startActiveAudioPlayback();
+}
+
+function toggleLoopPoint(which) {
+  if (!waveformState.isReady || !(currentAudio instanceof Audio)) return;
+  const dur = getWaveformDuration();
+  if (dur <= 0) return;
+
+  const t = Math.max(0, Math.min(dur, currentAudio.currentTime || 0));
+
+  if (which === 'A') {
+    if (waveformState.loopA !== null) {
+      waveformState.loopA = null;
+    } else {
+      if (waveformState.loopB !== null) {
+        if (Math.abs(t - waveformState.loopB) < MIN_LOOP_SPAN_S) {
+          showToast('Loop A and B must be at least 0.15s apart.', 'info');
+          return;
+        }
+        if (t > waveformState.loopB) {
+          waveformState.loopA = waveformState.loopB;
+          waveformState.loopB = t;
+        } else {
+          waveformState.loopA = t;
+        }
+      } else {
+        waveformState.loopA = t;
+      }
+
+      if (hasActiveABLoop()) {
+        if (currentAudio.currentTime < waveformState.loopA || currentAudio.currentTime >= waveformState.loopB) {
+          currentAudio.currentTime = waveformState.loopA;
+        }
+        if (currentAudio.paused) {
+          startActiveAudioPlayback();
+        }
+      }
+    }
+  } else if (which === 'B') {
+    if (waveformState.loopB !== null) {
+      waveformState.loopB = null;
+    } else {
+      if (waveformState.loopA !== null) {
+        if (Math.abs(t - waveformState.loopA) < MIN_LOOP_SPAN_S) {
+          showToast('Loop A and B must be at least 0.15s apart.', 'info');
+          return;
+        }
+        if (t < waveformState.loopA) {
+          waveformState.loopB = waveformState.loopA;
+          waveformState.loopA = t;
+        } else {
+          waveformState.loopB = t;
+        }
+      } else {
+        waveformState.loopB = t;
+      }
+
+      if (hasActiveABLoop()) {
+        currentAudio.currentTime = waveformState.loopA;
+        if (currentAudio.paused) {
+          startActiveAudioPlayback();
+        }
+      }
+    }
+  }
+
+  updateWaveformTimeDisplay();
+  drawWaveformCanvas();
+}
+
+function clearABLoop() {
+  if (waveformState.loopA === null && waveformState.loopB === null) return;
+  waveformState.loopA = null;
+  waveformState.loopB = null;
+  drawWaveformCanvas();
+}
+
+function cyclePlaybackSpeed() {
+  const curIdx = TTS_SPEED_PRESETS.indexOf(waveformState.playbackRate);
+  const nextRate = TTS_SPEED_PRESETS[(curIdx + 1) % TTS_SPEED_PRESETS.length];
+  waveformState.playbackRate = nextRate;
+  if (currentAudio instanceof Audio) {
+    currentAudio.playbackRate = nextRate;
+    if ('preservesPitch' in currentAudio) {
+      currentAudio.preservesPitch = true;
+    }
+  }
+  updateWaveformSpeedLabel();
+}
+
+function scrubWaveformToClientX(clientX) {
+  if (!waveformState.isReady || !(currentAudio instanceof Audio) || !waveformState.stageEl) return;
+  const dur = getWaveformDuration();
+  if (dur <= 0) return;
+
+  const rect = waveformState.stageEl.getBoundingClientRect();
+  const width = rect.width || waveformState.stageEl.clientWidth || 1;
+  const padX = 4;
+  const usableW = Math.max(1, width - padX * 2);
+  const ratio = Math.min(1, Math.max(0, (clientX - rect.left - padX) / usableW));
+  currentAudio.currentTime = ratio * dur;
+  updateWaveformTimeDisplay();
+  drawWaveformCanvas();
 }
 
 // Pre-warm Web Speech API voices to ensure they are loaded when needed
@@ -1007,63 +1769,58 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
 }
 
 /**
- * Play synthesized voice audio for the given text.
+ * Play synthesized voice audio for the given text and manage its per-sentence waveform.
  * @param {string} text - The text to synthesize and play
  * @param {HTMLElement} element - The .interleaved-rewritten element clicked
+ * @param {number|null} sentenceIdx - The index of the rewritten sentence block
  */
-async function playTTS(text, element) {
-  // If we are already playing this exact element, toggle pause/play
-  if (currentAudioElement === element && currentAudio) {
+async function playTTS(text, element, sentenceIdx = null) {
+  if (sentenceIdx === null || Number.isNaN(sentenceIdx)) {
+    const attrIdx = element?.closest('.interleaved-block')?.getAttribute('data-index');
+    if (attrIdx !== null && attrIdx !== undefined) {
+      sentenceIdx = parseInt(attrIdx, 10);
+    }
+  }
+
+  // If this sentence's waveform is already open, keep it open and toggle play/pause
+  if (sentenceIdx !== null && !Number.isNaN(sentenceIdx) && waveformState.sentenceIndex === sentenceIdx) {
+    if (waveformState.loading) return;
+    if (currentAudio instanceof Audio) {
+      toggleWaveformPlayPause();
+      return;
+    }
+  }
+
+  // Legacy fallback check if playing native SpeechSynthesis without waveform
+  if (currentAudioElement === element && currentAudio && !(currentAudio instanceof Audio)) {
     if (window.speechSynthesis && window.speechSynthesis.speaking && currentAudio.pause === window.speechSynthesis.cancel) {
-      // Toggle native SpeechSynthesis
       window.speechSynthesis.cancel();
       element.classList.remove('audio-playing');
       currentAudio = null;
       currentAudioElement = null;
       return;
-    } else if (currentAudio.paused !== undefined) {
-      // Toggle Audio Element
-      if (!currentAudio.paused) {
-        currentAudio.pause();
-        element.classList.remove('audio-playing');
-        return;
-      } else {
-        element.classList.add('audio-playing');
-        currentAudio.play().catch(err => {
-          console.error('Audio play failed:', err);
-          cleanup();
-        });
-        return;
-      }
     }
   }
 
-  // Stop any currently playing audio and revoke its object URL
+  // Close any previous sentence's audio & waveform before opening this one
   stopCurrentAudio();
 
+  const myRequestId = ++waveformState.requestId;
   currentAudioElement = element;
+  waveformState.loading = true;
+  waveformState.isReady = false;
   element.classList.add('audio-loading');
 
+  if (sentenceIdx !== null && !Number.isNaN(sentenceIdx)) {
+    mountWaveformOnBlock(sentenceIdx, text);
+    startWaveformRAF();
+  }
+
   let audioUrl = null;
-  const cleanup = () => {
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-      audioUrl = null;
-    }
-    if (currentAudio && currentAudio._objectUrl) {
-      URL.revokeObjectURL(currentAudio._objectUrl);
-      currentAudio._objectUrl = null;
-    }
-    element.classList.remove('audio-loading', 'audio-playing');
-    if (currentAudioElement === element) {
-      currentAudio = null;
-      currentAudioElement = null;
-    }
-  };
 
   try {
     await audioCache.waitReady();
-    if (currentAudioElement !== element) return;
+    if (myRequestId !== waveformState.requestId) return;
 
     const cacheKey = `${TTS_CACHE_PREFIX}${text}`;
     let blob;
@@ -1086,43 +1843,98 @@ async function playTTS(text, element) {
         audioCache.set(cacheKey, blob);
       } catch (fetchErr) {
         if (fetchErr?.isSessionExpired) {
-          cleanup();
+          stopCurrentAudio();
           return;
         }
         console.warn('Backend TTS failed, trying browser SpeechSynthesis fallback:', fetchErr);
-        // Verify user didn't click away or click another item during fetch
-        if (currentAudioElement !== element) return;
+        if (myRequestId !== waveformState.requestId) return;
+        stopCurrentAudio();
         playSpeechSynthesisFallback(text, element);
         return;
       }
     }
 
-    // Verify user didn't click away or click another item during fetch
-    if (currentAudioElement !== element) return;
+    if (myRequestId !== waveformState.requestId) return;
 
-    element.classList.remove('audio-loading');
-    element.classList.add('audio-playing');
+    let decoded = { bins: new Float32Array(WAVEFORM_BIN_COUNT), duration: 0 };
+    try {
+      decoded = await decodeAudioWaveform(blob, WAVEFORM_BIN_COUNT);
+    } catch (decodeErr) {
+      console.warn('Waveform decode failed, continuing with audio playback:', decodeErr);
+    }
+
+    if (myRequestId !== waveformState.requestId) return;
+
+    waveformState.rawBins = decoded.bins;
+    waveformState.duration = decoded.duration || 0;
+    waveformState.loading = false;
+    waveformState.isReady = true;
+
+    const targetEl = waveformState.rewrittenEl || element;
+    currentAudioElement = targetEl;
+    targetEl.classList.remove('audio-loading');
+    targetEl.classList.add('audio-playing');
 
     audioUrl = URL.createObjectURL(blob);
     const audio = new Audio(audioUrl);
     audio._objectUrl = audioUrl;
+    audio.playbackRate = waveformState.playbackRate;
+    if ('preservesPitch' in audio) {
+      audio.preservesPitch = true;
+    }
     currentAudio = audio;
 
+    audio.onloadedmetadata = () => {
+      if (myRequestId !== waveformState.requestId) return;
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        waveformState.duration = audio.duration;
+      }
+      updateWaveformTimeDisplay();
+      drawWaveformCanvas();
+    };
+
+    audio.ontimeupdate = () => {
+      if (myRequestId !== waveformState.requestId) return;
+      enforceABLoopIfNeeded();
+      updateWaveformTimeDisplay();
+      if (audio.paused) {
+        drawWaveformCanvas();
+      }
+    };
+
     audio.onended = () => {
-      cleanup();
+      if (myRequestId !== waveformState.requestId) return;
+      if (hasActiveABLoop()) {
+        audio.currentTime = waveformState.loopA;
+        startActiveAudioPlayback();
+        return;
+      }
+      // Keep the waveform open so user can replay, scrub, or set A-B loop points
+      (waveformState.rewrittenEl || targetEl).classList.remove('audio-playing');
+      stopWaveformRAF();
+      updateWaveformTimeDisplay();
+      drawWaveformCanvas();
     };
 
     audio.onerror = () => {
+      if (myRequestId !== waveformState.requestId) return;
       showToast('Error playing audio.', 'error');
-      cleanup();
+      stopCurrentAudio();
     };
 
+    updateWaveformTimeDisplay();
+    drawWaveformCanvas();
+    startWaveformRAF();
     await audio.play();
 
   } catch (err) {
+    if (myRequestId !== waveformState.requestId) return;
     console.error('TTS playback failed:', err);
     showToast(err.message || 'Voice synthesis failed.', 'error');
-    cleanup();
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+    }
+    stopCurrentAudio();
   }
 }
 
@@ -3142,11 +3954,12 @@ function setupEventListeners() {
   DOM.highlightLayer?.addEventListener('mousedown', (e) => {
     if (!AppState.inRewriteMode) return;
     
-    // If they clicked a mark or the explicit TTS speaker button, let the click handler run naturally
+    // If they clicked a mark, TTS speaker button, or waveform panel, let their handlers run naturally
     if (
       e.target.closest('.mark-applied-fix') ||
       e.target.closest('mark[data-error-index]') ||
-      e.target.closest('.btn-tts-play')
+      e.target.closest('.btn-tts-play') ||
+      e.target.closest('.tts-waveform-panel')
     ) {
       const blockEl = e.target.closest('.interleaved-block');
       if (blockEl) {
@@ -3169,6 +3982,49 @@ function setupEventListeners() {
       }
     }
   });
+
+  // --- Waveform pointer scrubbing ---
+  let _scrubPointerId = null;
+  DOM.highlightLayer?.addEventListener('pointerdown', (e) => {
+    const stageEl = e.target.closest('.tts-waveform-stage');
+    if (!stageEl || !AppState.inRewriteMode) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (!waveformState.isReady || !(currentAudio instanceof Audio)) return;
+
+    e.stopPropagation();
+    waveformState.isScrubbing = true;
+    _scrubPointerId = e.pointerId;
+    if (typeof stageEl.setPointerCapture === 'function') {
+      try {
+        stageEl.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    }
+    scrubWaveformToClientX(e.clientX);
+  });
+
+  DOM.highlightLayer?.addEventListener('pointermove', (e) => {
+    if (!waveformState.isScrubbing) return;
+    if (_scrubPointerId !== null && e.pointerId !== _scrubPointerId) return;
+    scrubWaveformToClientX(e.clientX);
+  });
+
+  const endWaveformScrub = (e) => {
+    if (!waveformState.isScrubbing) return;
+    if (_scrubPointerId !== null && e.pointerId !== undefined && e.pointerId !== _scrubPointerId) return;
+    waveformState.isScrubbing = false;
+    _scrubPointerId = null;
+    if (waveformState.stageEl && e.pointerId !== undefined && typeof waveformState.stageEl.releasePointerCapture === 'function') {
+      try {
+        waveformState.stageEl.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+    }
+    enforceABLoopIfNeeded();
+    updateWaveformTimeDisplay();
+    drawWaveformCanvas();
+  };
+
+  DOM.highlightLayer?.addEventListener('pointerup', endWaveformScrub);
+  DOM.highlightLayer?.addEventListener('pointercancel', endWaveformScrub);
 
   // --- Delegated click: Undo applied fix, open mobile popover on tap, or select rewritten sentence ---
   DOM.highlightLayer?.addEventListener('click', (e) => {
@@ -3213,6 +4069,28 @@ function setupEventListeners() {
       return;
     }
 
+    // Clicked playback speed button inside the open waveform panel
+    const speedBtn = e.target.closest('.btn-tts-speed');
+    if (speedBtn) {
+      e.stopPropagation();
+      cyclePlaybackSpeed();
+      return;
+    }
+
+    // Clicked anywhere else inside the open waveform panel (e.g. stage after scrub)
+    const waveformPanel = e.target.closest('.tts-waveform-panel');
+    if (waveformPanel) {
+      e.stopPropagation();
+      const blockEl = waveformPanel.closest('.interleaved-block');
+      if (blockEl) {
+        const idx = parseInt(blockEl.getAttribute('data-index'), 10);
+        if (!Number.isNaN(idx) && AppState.activeRewriteIndex !== idx) {
+          activateRewriteBlock(idx, false);
+        }
+      }
+      return;
+    }
+
     // Clicked the explicit TTS speaker button inside a rewritten sentence
     const ttsBtn = e.target.closest('.btn-tts-play');
     if (ttsBtn) {
@@ -3220,8 +4098,9 @@ function setupEventListeners() {
       const blockEl = ttsBtn.closest('.interleaved-block');
       const rewrittenEl = ttsBtn.closest('.interleaved-rewritten');
       let text = '';
+      let idx = null;
       if (blockEl) {
-        const idx = parseInt(blockEl.getAttribute('data-index'), 10);
+        idx = parseInt(blockEl.getAttribute('data-index'), 10);
         activateRewriteBlock(idx, false);
         text = (AppState.rewriteSentences[idx]?.rewritten || '').trim();
       }
@@ -3230,7 +4109,7 @@ function setupEventListeners() {
         text = textEl.textContent.trim();
       }
       if (text && rewrittenEl) {
-        playTTS(text, rewrittenEl);
+        playTTS(text, rewrittenEl, idx);
       }
       return;
     }
@@ -3271,7 +4150,53 @@ function setupEventListeners() {
     }
   });
 
+  // --- Waveform & A-B loop keyboard shortcuts (capture phase prevents Space scroll / button double-fire) ---
+  document.addEventListener('keydown', (e) => {
+    if (!AppState.authenticated || !AppState.inRewriteMode) return;
+    if (waveformState.sentenceIndex === null || !waveformState.isReady) return;
+    if (!(currentAudio instanceof Audio)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]')) {
+      return;
+    }
 
+    const key = e.key;
+    if (key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      toggleWaveformPlayPause();
+      return;
+    }
+
+    const lower = key ? key.toLowerCase() : '';
+    if (lower === 'a' || lower === 'b' || lower === 'x') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      if (lower === 'a') {
+        toggleLoopPoint('A');
+      } else if (lower === 'b') {
+        toggleLoopPoint('B');
+      } else {
+        clearABLoop();
+      }
+    }
+  }, true);
+
+  document.addEventListener('keyup', (e) => {
+    if (!AppState.authenticated || !AppState.inRewriteMode) return;
+    if (waveformState.sentenceIndex === null || !waveformState.isReady) return;
+    if (!(currentAudio instanceof Audio)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]')) {
+      return;
+    }
+    if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
 
   // --- Keyboard shortcuts ---
   document.addEventListener('keydown', (e) => {

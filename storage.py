@@ -147,6 +147,13 @@ def init_db(
                     is_fresh_seed INTEGER NOT NULL DEFAULT 1,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS tts_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    audio_blob BLOB NOT NULL,
+                    media_type TEXT NOT NULL DEFAULT 'audio/wav',
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             if bootstrap_users:
@@ -469,5 +476,56 @@ def save_user_state(
                 )
             conn.commit()
             return now_iso
+        finally:
+            conn.close()
+
+
+def get_tts_audio(
+    cache_key: str,
+    db_path: Path | str | None = None,
+) -> tuple[bytes, str] | None:
+    """Fetch cached synthesized TTS audio bytes and media type by cache key."""
+    if not cache_key:
+        return None
+    key_hash = _hash_token(cache_key)
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT audio_blob, media_type FROM tts_cache WHERE cache_key = ?",
+            (key_hash,),
+        ).fetchone()
+        if not row:
+            return None
+        return bytes(row["audio_blob"]), str(row["media_type"] or "audio/wav")
+    finally:
+        conn.close()
+
+
+def save_tts_audio(
+    cache_key: str,
+    audio_bytes: bytes,
+    media_type: str = "audio/wav",
+    db_path: Path | str | None = None,
+) -> None:
+    """Persist synthesized TTS audio bytes in SQLite."""
+    if not cache_key or not audio_bytes:
+        return
+    key_hash = _hash_token(cache_key)
+    now_iso = _utc_now_iso()
+    with _write_lock:
+        conn = _connect(db_path)
+        try:
+            conn.execute(
+                """
+                INSERT INTO tts_cache (cache_key, audio_blob, media_type, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    audio_blob = excluded.audio_blob,
+                    media_type = excluded.media_type,
+                    created_at = excluded.created_at
+                """,
+                (key_hash, audio_bytes, media_type or "audio/wav", now_iso),
+            )
+            conn.commit()
         finally:
             conn.close()

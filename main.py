@@ -41,7 +41,7 @@ GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR: str = os.path.join(BASE_DIR, "frontend")
 TTS_CACHE_MAX_ITEMS: int = int(os.getenv("TTS_CACHE_MAX_ITEMS", "32"))
-_tts_cache: OrderedDict[str, bytes] = OrderedDict()
+_tts_cache: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
 _tts_cache_lock = threading.Lock()
 
 RATE_LIMIT_PER_MIN: int = int(os.getenv("RATE_LIMIT_PER_MIN", "20"))
@@ -453,23 +453,54 @@ def hone_text(req: HoneRequest, user: dict = Depends(require_user)) -> dict:
     }
 
 
+def _put_tts_memory_cache(cache_key: str, audio_bytes: bytes, media_type: str) -> None:
+    """Store TTS audio in the bounded in-memory L1 LRU cache."""
+    if TTS_CACHE_MAX_ITEMS <= 0:
+        return
+    with _tts_cache_lock:
+        _tts_cache[cache_key] = (audio_bytes, media_type)
+        _tts_cache.move_to_end(cache_key)
+        while len(_tts_cache) > TTS_CACHE_MAX_ITEMS:
+            _tts_cache.popitem(last=False)
+
+
+def _tts_response(audio_bytes: bytes, media_type: str, cache_status: str) -> Response:
+    """Build a consistent audio response for /api/tts."""
+    return Response(
+        content=audio_bytes,
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=86400", "X-TTS-Cache": cache_status},
+    )
+
+
 @app.post("/api/tts")
 def text_to_speech(req: TTSRequest, user: dict = Depends(require_user)) -> Response:
-    """Synthesize speech via Gemini TTS and return ``audio/wav`` with bounded caching."""
+    """Synthesize speech via Gemini TTS with in-memory L1 and persistent SQLite L2 caching."""
     clean_text = req.text.strip()
     if not clean_text:
         raise HTTPException(status_code=400, detail="Text must not be empty.")
 
-    cache_key = f"{gemini_bridge.TTS_MODEL}:{gemini_bridge.TTS_VOICE}:{clean_text}"
+    cache_key = (
+        f"{gemini_bridge.TTS_MODEL}:{gemini_bridge.TTS_VOICE}:"
+        f"{gemini_bridge.TTS_STYLE_PROMPT}:{clean_text}"
+    )
     with _tts_cache_lock:
         cached = _tts_cache.get(cache_key)
         if cached is not None:
             _tts_cache.move_to_end(cache_key)
-            return Response(
-                content=cached,
-                media_type="audio/wav",
-                headers={"Cache-Control": "private, max-age=86400", "X-TTS-Cache": "HIT"},
-            )
+            wav_bytes, media_type = cached
+            return _tts_response(wav_bytes, media_type, "HIT")
+
+    try:
+        db_cached = storage.get_tts_audio(cache_key)
+    except Exception as exc:
+        logger.warning("Failed to read TTS audio from SQLite: %s", exc)
+        db_cached = None
+
+    if db_cached is not None:
+        wav_bytes, media_type = db_cached
+        _put_tts_memory_cache(cache_key, wav_bytes, media_type)
+        return _tts_response(wav_bytes, media_type, "HIT")
 
     try:
         wav_bytes, media_type = gemini_bridge.synthesize_speech(clean_text)
@@ -477,17 +508,14 @@ def text_to_speech(req: TTSRequest, user: dict = Depends(require_user)) -> Respo
         logger.error("Gemini TTS synthesis failed: %s", exc)
         raise HTTPException(status_code=503, detail="TTS service is temporarily unavailable.")
 
-    with _tts_cache_lock:
-        _tts_cache[cache_key] = wav_bytes
-        _tts_cache.move_to_end(cache_key)
-        while len(_tts_cache) > TTS_CACHE_MAX_ITEMS:
-            _tts_cache.popitem(last=False)
+    try:
+        storage.save_tts_audio(cache_key, wav_bytes, media_type)
+    except Exception as exc:
+        logger.warning("Failed to persist TTS audio to SQLite: %s", exc)
 
-    return Response(
-        content=wav_bytes,
-        media_type=media_type,
-        headers={"Cache-Control": "private, max-age=86400", "X-TTS-Cache": "MISS"},
-    )
+    _put_tts_memory_cache(cache_key, wav_bytes, media_type)
+
+    return _tts_response(wav_bytes, media_type, "MISS")
 
 # ---------------------------------------------------------------------------
 # Static frontend — MUST be mounted AFTER all /api routes so it doesn't

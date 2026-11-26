@@ -1853,6 +1853,18 @@ body::after {
   pointer-events: none;
 }
 
+.btn-tts-play .icon-tts-pause {
+  display: none;
+}
+
+.interleaved-rewritten.audio-playing .btn-tts-play .icon-tts-play {
+  display: none;
+}
+
+.interleaved-rewritten.audio-playing .btn-tts-play .icon-tts-pause {
+  display: block;
+}
+
 /* --- TTS Visual Feedback --- */
 .interleaved-rewritten.audio-loading {
   background: rgba(199, 164, 74, 0.12) !important;

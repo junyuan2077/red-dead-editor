@@ -390,7 +390,7 @@ function renderInterleavedRewrite(text, errors, appliedFixes) {
     html += `
       <div class="interleaved-block${isActive ? ' active-block' : ''}" data-index="${i}">
         <div class="interleaved-original">${originalHtml}</div>
-        <div class="interleaved-rewritten" tabindex="0"><span class="interleaved-rewritten-text">${escapeHTML(item.rewritten)}</span><button class="btn-tts-play" type="button" aria-label="Listen to rewritten sentence" title="Listen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></button></div>
+        <div class="interleaved-rewritten" tabindex="0"><span class="interleaved-rewritten-text">${escapeHTML(item.rewritten)}</span><button class="btn-tts-play" type="button" aria-label="Listen to rewritten sentence" title="Listen"><svg class="icon-tts-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg><svg class="icon-tts-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button></div>
       </div>`;
       
     cursor = itemEnd;
